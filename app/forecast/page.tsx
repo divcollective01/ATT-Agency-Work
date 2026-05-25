@@ -4,6 +4,7 @@ import { COPY } from "@/lib/copy";
 import { loadEnrichedMaterials } from "@/lib/materials";
 import type { ForecastMaterial } from "@/lib/forecast";
 
+export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 export default async function ForecastPage() {

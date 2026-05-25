@@ -3,6 +3,7 @@ import { MaterialTracker, type TrackedMaterial } from "@/components/screens/mate
 import { COPY } from "@/lib/copy";
 import { loadEnrichedMaterials } from "@/lib/materials";
 
+export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 export default async function MaterialsPage() {
