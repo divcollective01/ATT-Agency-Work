@@ -1,0 +1,15 @@
+{
+  "name": "att-profit-shield",
+  "compatibility_date": "2026-05-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "pages_build_output_dir": ".vercel/output/static"
+
+  // Teller mTLS binding — required for /api/teller/sync to talk to api.teller.io.
+  // Upload the cert/key first (run from a machine that still has access to certs/):
+  //   wrangler mtls-certificate upload --cert certs/teller.crt --key certs/teller.key --name teller
+  // Copy the returned certificate_id, then add this block (drop the leading //s):
+  //
+  // ,"mtls_certificates": [
+  //   { "binding": "TELLER_MTLS", "certificate_id": "PASTE_CERTIFICATE_ID_HERE" }
+  // ]
+}

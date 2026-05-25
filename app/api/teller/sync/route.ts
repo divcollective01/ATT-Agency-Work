@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
-import https from "https";
+import { getRequestContext } from "@cloudflare/next-on-pages";
 import type {
   TellerTransaction,
   TellerAccount,
   TellerSyncData,
 } from "@/lib/plaid-types";
 
-export const runtime = "nodejs";
+export const runtime = "edge";
 
 type TellerRawAccount = {
   id: string;
@@ -34,7 +32,9 @@ type TellerRawTransaction = {
   } | null;
 };
 
-type MtlsMaterial = string | Buffer;
+// Cloudflare's mTLS certificate binding exposes a Fetcher-like object whose
+// .fetch() presents the bound client cert during the outbound TLS handshake.
+type MtlsFetcher = { fetch: typeof fetch };
 
 function toNumber(v: string | number | null | undefined): number {
   if (v === null || v === undefined) return 0;
@@ -44,99 +44,58 @@ function toNumber(v: string | number | null | undefined): number {
 }
 
 function basicAuthHeader(accessToken: string): string {
-  const raw = `${accessToken}:`;
-  const encoded = Buffer.from(raw, "utf8").toString("base64");
-  return `Basic ${encoded}`;
+  return `Basic ${btoa(`${accessToken}:`)}`;
 }
 
 /**
- * Load Teller mTLS materials, prioritizing env-string mode (Vercel safe).
+ * Resolve the Teller mTLS Fetcher from the Cloudflare environment.
  *
- * 1. If TELLER_CERT and TELLER_KEY are both present in the environment,
- *    treat them as PEM strings. Vercel encodes multiline secrets with
- *    literal "\n" sequences, so we unescape them back into real newlines
- *    before handing them to the HTTPS layer.
- *
- * 2. Fallback for localhost: read the cert/key files from disk using the
- *    paths in TELLER_CERT_PATH / TELLER_KEY_PATH. This branch is never
- *    hit on Vercel (no certs/ folder ships in the build).
- *
- * 3. If neither path is satisfied, surface a clear configuration error.
+ * On Cloudflare Pages the cert/key are not passed as PEM env strings —
+ * they are uploaded via `wrangler mtls-certificate upload` and surfaced as
+ * a binding declared in wrangler.jsonc under `mtls_certificates`. The Web
+ * `fetch()` API has no `cert`/`key` init option, so the binding's `.fetch`
+ * is the only supported way to do client-cert auth from a Worker.
  */
-function loadTellerCreds(): { cert: MtlsMaterial; key: MtlsMaterial } {
-  const envCert = process.env.TELLER_CERT;
-  const envKey = process.env.TELLER_KEY;
-
-  if (envCert && envKey) {
-    return {
-      cert: envCert.replace(/\\n/g, "\n"),
-      key: envKey.replace(/\\n/g, "\n"),
-    };
+function getTellerFetcher(): MtlsFetcher {
+  const { env } = getRequestContext();
+  const fetcher = (env as { TELLER_MTLS?: MtlsFetcher }).TELLER_MTLS;
+  if (!fetcher) {
+    throw new Error(
+      "Teller mTLS binding is not configured. Upload the cert via " +
+        "`wrangler mtls-certificate upload --cert certs/teller.crt --key certs/teller.key --name teller`, " +
+        "then add a TELLER_MTLS binding under `mtls_certificates` in wrangler.jsonc."
+    );
   }
-
-  const certPath = process.env.TELLER_CERT_PATH;
-  const keyPath = process.env.TELLER_KEY_PATH;
-  if (certPath && keyPath) {
-    const cert = fs.readFileSync(path.resolve(process.cwd(), certPath));
-    const key = fs.readFileSync(path.resolve(process.cwd(), keyPath));
-    return { cert, key };
-  }
-
-  throw new Error(
-    "Teller mTLS credentials are not configured. Set TELLER_CERT and TELLER_KEY env vars (production) or TELLER_CERT_PATH and TELLER_KEY_PATH (local)."
-  );
+  return fetcher;
 }
 
-function tellerRequest<T>(
+async function tellerRequest<T>(
+  fetcher: MtlsFetcher,
   url: string,
-  accessToken: string,
-  cert: MtlsMaterial,
-  key: MtlsMaterial
+  accessToken: string
 ): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const req = https.request(
-      {
-        host: u.hostname,
-        port: u.port || 443,
-        path: `${u.pathname}${u.search}`,
-        method: "GET",
-        cert,
-        key,
-        headers: {
-          Authorization: basicAuthHeader(accessToken),
-          Accept: "application/json",
-        },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          const body = Buffer.concat(chunks).toString("utf8");
-          const status = res.statusCode ?? 0;
-          if (status >= 200 && status < 300) {
-            try {
-              resolve(JSON.parse(body) as T);
-            } catch (e) {
-              reject(
-                new Error(
-                  `Teller response parse error: ${
-                    e instanceof Error ? e.message : "unknown"
-                  }`
-                )
-              );
-            }
-          } else {
-            reject(
-              new Error(`Teller request failed (${status}): ${body.slice(0, 400)}`)
-            );
-          }
-        });
-      }
-    );
-    req.on("error", reject);
-    req.end();
+  const res = await fetcher.fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: basicAuthHeader(accessToken),
+      Accept: "application/json",
+    },
   });
+  const body = await res.text();
+  if (!res.ok) {
+    throw new Error(
+      `Teller request failed (${res.status}): ${body.slice(0, 400)}`
+    );
+  }
+  try {
+    return JSON.parse(body) as T;
+  } catch (e) {
+    throw new Error(
+      `Teller response parse error: ${
+        e instanceof Error ? e.message : "unknown"
+      }`
+    );
+  }
 }
 
 export async function POST(req: Request) {
@@ -152,27 +111,25 @@ export async function POST(req: Request) {
       );
     }
 
-    let cert: MtlsMaterial;
-    let key: MtlsMaterial;
+    let fetcher: MtlsFetcher;
     try {
-      ({ cert, key } = loadTellerCreds());
+      fetcher = getTellerFetcher();
     } catch (e) {
       return NextResponse.json(
         {
           error:
             e instanceof Error
               ? e.message
-              : "Teller mTLS credentials are not configured",
+              : "Teller mTLS binding is not configured",
         },
         { status: 500 }
       );
     }
 
     const rawAccounts = await tellerRequest<TellerRawAccount[]>(
+      fetcher,
       "https://api.teller.io/accounts",
-      body.accessToken,
-      cert,
-      key
+      body.accessToken
     );
 
     const accounts: TellerAccount[] = [];
@@ -196,10 +153,9 @@ export async function POST(req: Request) {
       let rawTx: TellerRawTransaction[] = [];
       try {
         rawTx = await tellerRequest<TellerRawTransaction[]>(
+          fetcher,
           `https://api.teller.io/accounts/${a.id}/transactions`,
-          body.accessToken,
-          cert,
-          key
+          body.accessToken
         );
       } catch {
         rawTx = [];

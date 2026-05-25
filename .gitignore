@@ -9,7 +9,10 @@ dist
 .env*.local
 
 .vercel
+.wrangler
 .turbo
+
+tsconfig.tsbuildinfo
 
 *.log
 npm-debug.log*
