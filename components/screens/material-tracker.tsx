@@ -64,22 +64,21 @@ export function MaterialTracker({ materials }: { materials: TrackedMaterial[] })
   return (
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
       <aside className="lg:col-span-2 rounded-3xl border border-cocoa-700 bg-cocoa-900/70 p-7 shadow-card">
-        <p className="text-[11px] uppercase tracking-[0.22em] text-vibrant">Add a material</p>
+        <p className="text-[11px] uppercase tracking-[0.22em] text-vibrant">Add a purchase</p>
         <h3 className="font-display text-3xl mt-3 leading-tight">
-          What goes into your product?
+          What does your business spend on?
         </h3>
         <p className="text-sm text-cream-mute mt-2">
-          Map it to a FRED Producer Price Index, or set a custom annual cost volatility
-          if the macro feed doesn&apos;t fit your supplier.
+          Materials, software, subscriptions, rent, contractors — add anything. Map to a FRED index for macro tracking, or set a custom annual volatility if you know your cost better.
         </p>
 
         <form ref={formRef} onSubmit={handleSubmit} className="mt-6 space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Material name</Label>
+            <Label htmlFor="name">Name</Label>
             <Input
               id="name"
               name="name"
-              placeholder="e.g. Stainless Steel"
+              placeholder="e.g. AWS, Office Rent, Stainless Steel"
               required
               maxLength={120}
             />
@@ -115,7 +114,7 @@ export function MaterialTracker({ materials }: { materials: TrackedMaterial[] })
               <Input
                 id="unit"
                 name="unit"
-                placeholder="kg, lb…"
+                placeholder="hr, mo, unit…"
                 maxLength={40}
               />
             </div>

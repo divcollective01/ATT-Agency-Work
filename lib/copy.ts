@@ -5,7 +5,7 @@ export const COPY = {
 
   nav: {
     leaks: "Spending",
-    materials: "Materials",
+    materials: "Purchases",
     inflation: "Inflation",
     forecast: "Forecast"
   },
@@ -20,13 +20,13 @@ export const COPY = {
   },
 
   materials: {
-    eyebrow: "Screen 02 — Raw Materials",
-    headline: "Track every material that goes into your product.",
-    sub: "Map each input to a FRED Producer Price Index. We monitor the wholesale market and flag drift before it hits your invoice.",
-    addCta: "Add Your First Material",
-    addAnother: "Add Material",
-    emptyTitle: "No materials tracked yet",
-    emptyBody: "Add the raw components you purchase to start monitoring vendor pricing and macro trends."
+    eyebrow: "Screen 02 — Purchases & Services",
+    headline: "Track every cost your business carries.",
+    sub: "Materials, software, subscriptions, rent, contractors — add anything. Map to a FRED index for macro tracking, or set a custom volatility if you know your cost better than the index does.",
+    addCta: "Add Your First Purchase",
+    addAnother: "Add Purchase",
+    emptyTitle: "No purchases tracked yet",
+    emptyBody: "Add materials, services, subscriptions, and any other recurring costs to start monitoring price drift."
   },
 
   inflation: {
