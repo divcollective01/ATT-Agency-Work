@@ -64,9 +64,9 @@ export function MaterialTracker({ materials }: { materials: TrackedMaterial[] })
   return (
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
       <aside className="lg:col-span-2 rounded-3xl border border-cocoa-700 bg-cocoa-900/70 p-7 shadow-card">
-        <p className="text-[11px] uppercase tracking-[0.22em] text-vibrant">Add a purchase</p>
+        <p className="text-[11px] uppercase tracking-[0.22em] text-vibrant">Add a cost input</p>
         <h3 className="font-display text-3xl mt-3 leading-tight">
-          What does your business spend on?
+          What does your business absorb?
         </h3>
         <p className="text-sm text-cream-mute mt-2">
           Materials, software, subscriptions, rent, contractors — add anything. Map to a FRED index for macro tracking, or set a custom annual volatility if you know your cost better.
