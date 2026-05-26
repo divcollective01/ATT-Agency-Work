@@ -27,6 +27,11 @@ export type EnrichedMaterial = MaterialRow & {
 export async function listMaterials(): Promise<MaterialRow[]> {
   try {
     const supabase = createSupabaseServerClient();
+    // Strict RLS ("user owns materials") restricts this SELECT to rows where
+    // user_id matches the caller's internal public.users.id. Unauthenticated
+    // callers see zero rows (RLS returns an empty result set, not an error).
+    // The data ?? [] coalesce + try/catch below handles both that empty path
+    // and any unexpected transport-level failures.
     const { data, error } = await supabase
       .from("material_costs")
       .select(

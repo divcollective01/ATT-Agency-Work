@@ -59,6 +59,36 @@ export async function createMaterial(formData: FormData): Promise<ActionResult> 
   }
 
   const supabase = createSupabaseServerClient();
+
+  // Required for RLS: resolve the calling auth user, then map to the internal
+  // public.users.id we store on material_costs.user_id. Without user_id set,
+  // the "user owns materials" policy will reject the insert.
+  const {
+    data: { user: authUser },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !authUser) {
+    return { ok: false, error: "You must be signed in to add a material." };
+  }
+
+  const { data: userRow, error: userLookupError } = await supabase
+    .from("users")
+    .select("id")
+    .eq("auth_user_id", authUser.id)
+    .maybeSingle();
+  if (userLookupError) {
+    console.error("[materials] user lookup error:", userLookupError.message);
+    return { ok: false, error: userLookupError.message };
+  }
+  if (!userRow) {
+    return {
+      ok: false,
+      error: "No matching internal user profile. Contact support.",
+    };
+  }
+
+  payload.user_id = userRow.id;
+
   const { error } = await supabase.from("material_costs").insert(payload);
 
   if (error) {

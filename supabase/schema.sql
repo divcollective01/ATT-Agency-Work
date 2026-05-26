@@ -130,17 +130,18 @@ create policy "user owns forecasts" on public.predictive_snapshots
   using (user_id in (select id from public.users where auth_user_id = auth.uid()))
   with check (user_id in (select id from public.users where auth_user_id = auth.uid()));
 
--- Prototype anon policies for material_costs
+-- Drop the previous prototype anon policies (these allowed cross-tenant reads
+-- and were the source of the material_costs shared-state leak).
 drop policy if exists "prototype: anon read materials"   on public.material_costs;
 drop policy if exists "prototype: anon insert materials" on public.material_costs;
 drop policy if exists "prototype: anon update materials" on public.material_costs;
 drop policy if exists "prototype: anon delete materials" on public.material_costs;
 
-create policy "prototype: anon read materials"
-  on public.material_costs for select using (true);
-create policy "prototype: anon insert materials"
-  on public.material_costs for insert with check (true);
-create policy "prototype: anon update materials"
-  on public.material_costs for update using (true) with check (true);
-create policy "prototype: anon delete materials"
-  on public.material_costs for delete using (true);
+-- Strict per-user ownership policy. Mirrors "user owns expenses": all SELECT /
+-- INSERT / UPDATE / DELETE operations are gated on the material's user_id
+-- matching the internal public.users row whose auth_user_id is the caller.
+drop policy if exists "user owns materials" on public.material_costs;
+create policy "user owns materials" on public.material_costs
+  for all
+  using (user_id in (select id from public.users where auth_user_id = auth.uid()))
+  with check (user_id in (select id from public.users where auth_user_id = auth.uid()));
