@@ -95,17 +95,34 @@ export type FallbackBucket = typeof FALLBACK_BUCKET;
 export type CorporateBucket = ExpenseCategory;
 export type SpendingBucket = ExpenseCategory;
 
+// BUCKET_RULES — first match wins. Ordering is therefore a hard contract,
+// not a stylistic choice. Tier order (top to bottom):
+//   T1 (1-6):   Bank / payment infrastructure. Distinctive system descriptors.
+//   T2 (7-14):  Named SaaS / platform merchants. Must precede broad retail
+//               so AWS hits Cloud and not AMAZON in Consumer Goods.
+//   T3 (15-22): Operational categories with merchant overlap.
+//   T4 (23-26): Catch-all retail / consumer / transit. Evaluated last so all
+//               specifics win. Meals precedes Ground Transit so "UBER EATS"
+//               hits Meals instead of "UBER" hitting Transit.
 const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]> = [
+  // ───────────────────────── T1: Bank / payment infrastructure ─────────────────────────
   ["Bank Fees & Treasury Services", [
     "SERVICE CHG",
     "ANNUAL FEE",
     "ANALYSIS FEE",
+    "RECURRING FEE",
+    "CARD FEE",
     "WIRE FEE",
+    "WIRE CHG",
+    "MAINTENANCE FEE",
     "OVERDRAFT",
     "STOP PAYMENT",
-    "MAINTENANCE FEE",
+    "STOP PMNT",
+    "INSUFFICIENT",
+    "NSF",
     "INTEREST EXP",
     "FINANCE CHG",
+    "RET RETURNED",
   ]],
   ["Zelle & Peer Payments", [
     "ZELLE",
@@ -132,6 +149,12 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "ACH BAL",
     "OUTWARD TRANSFER",
     "CHIPS",
+    "CHIPS WIRE",
+    "MERCURY WIRE",
+    "BREX WIRE",
+    "REVOLUT",
+    "WISE.COM",          // bare "WISE" collides with "OTHERWISE" etc.
+    "TRANSFERWISE",
   ]],
   ["Corporate Card Settlements", [
     "CORP CARD",
@@ -153,15 +176,30 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "LEGAL FILING",
     "FINCEN",
   ]],
+
+  // ───────────────────────── T2: Named SaaS / platform merchants ─────────────────────────
   ["Merchant Services & Revenue Processing", [
     "STRIPE",
+    "STRIPE*",
     "SQUARE",
     "SQ *",
     "PAYPAL",
     "PAYPAL *",
+    "PYPL",
     "SP *",
-    "SHOPIFY",
+    "BRAINTREE",
+    "AUTHORIZE.NET",
     "ADYEN",
+    "PADDLE.COM",        // bare "PADDLE" collides with paddleboard rentals
+    "GUMROAD",
+    "LEMONSQUEEZY",
+    "CLOVER",
+    "TOAST",
+    "SHOPIFY",
+    "WOOCOMMERCE",
+    "CHARGEBEE",
+    "RECURLY",
+    "GOCARDLESS",
     "MERCHANT FEES",
     "DISCOUNT RATE",
     "CHARGEBACK",
@@ -170,8 +208,9 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
   ["Contractor & Freelance Platforms", [
     "UPWORK",
     "FIVERR",
-    "DEEL",
+    "DEEL",              // primary use case; not duplicated in Payroll
     "TOPTAL",
+    "GURU.COM",          // bare "GURU" collides with restaurant names
     "FREELANCER",
     "OUTSOURCE",
   ]],
@@ -180,33 +219,83 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "GUSTO",
     "RIPPLING",
     "TRINET",
+    "BAMBOOHR",
+    "WORKDAY",
+    "PAPAYA GLOBAL",     // bare "PAPAYA" collides with grocers
+    "PAYCHEX",
+    "PAYLOCITY",
+    "ZENEFITS",
+    "NAVIA",
     "PAYROLL",
     "DIR DEP",
     "SALARY",
     "WAGE",
     "HEALTH INS",
-    "401K",
     "BENEFITS",
+    // Health insurance carriers — billed at company level, classified
+    // as payroll/benefits per spec. Insurance & Risk Management (T3) keeps
+    // property/casualty carriers (GEICO, ALLSTATE, etc).
+    "BCBS",
+    "BLUE CROSS",
+    "AETNA",
+    "CIGNA",
+    "HUMANA",
+    "UNITEDHEALTH",
+    "KAISER",
+    // Retirement contributions through payroll
+    "401K",
+    "FIDELITY",
+    "VANGUARD",
+    "EMPOWER",
   ]],
   ["Cloud Infrastructure & DevOps", [
+    // IaaS / hosting
     "AWS",
-    "AMAZON WEB",
+    "AMAZON WEB",        // matches "AMAZON WEB SERVICES" too; precedes Consumer "AMAZON"
     "VERCEL",
     "GITHUB",
     "GOOGLE CLOUD",
     "GCP",
     "AZURE",
-    "SUPABASE",
     "CLOUDFLARE",
     "CLOUDFLARE DNS",
-    "DATADOG",
     "DIGITALOCEAN",
+    "LINODE",
+    "RENDER.COM",        // bare "RENDER" collides with English
+    "NETLIFY",
+    "HEROKU",
+    "FLY.IO",
+    "BACKBLAZE",
+    // Data / DB
+    "SUPABASE",
+    "SNOWFLAKE",
+    "DATABRICKS",
     "MONGODB",
+    "PLANETSCALE",
+    "COCKROACHDB",
+    "ALGOLIA",
+    "PINECONE",
+    // DNS / domains
     "ROUTE53",
     "GODADDY",
     "NAMECHEAP",
     "NAME.COM",
     "SQUARESPACE",
+    // Comms / email infra
+    "TWILIO",
+    "SENDGRID",
+    "POSTMARK",
+    "MAILGUN",
+    "APPSMITH",
+    // Observability / ops
+    "LOGROCKET",
+    "SENTRY",
+    "DATADOG",
+    "NEWRELIC",
+    "NEW RELIC",
+    "PAGERDUTY",
+    "HASHICORP",         // covers HashiCorp Vault; bare "VAULT" too generic
+    // AI APIs
     "OPENAI",
     "ANTHROPIC",
     "CLAUDE",
@@ -215,27 +304,48 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "COHERE",
   ]],
   ["Enterprise SaaS & Workflow", [
+    // Comms / meetings
     "SLACK",
     "ZOOM",
     "LOOM",
+    "INTERCOM",
+    // Whiteboard / docs / design
     "MIRO",
     "LUCIDCHART",
-    "SALESFORCE",
-    "HUBSPOT",
+    "FIGMA",             // moved from Creative Tooling per spec
     "NOTION",
+    // Project / workflow
     "LINEAR",
     "ASANA",
+    "MONDAY.COM",
+    "CLICKUP",
     "JIRA",
     "ATLASSIAN",
+    "AIRTABLE",
+    "RETOOL",
+    "ZAPIER",
+    "MAKE.COM",          // bare "MAKE" collides with English
+    "TYPEFORM",
+    // CRM
+    "SALESFORCE",
+    "HUBSPOT",
+    // Productivity suites
     "GSUITE",
     "GOOGLE WORK",
+    "GOOGLE WORKSPACE",
     "MICROSOFT 365",
+    "M365",
     "OFFICE 365",
-    "INTERCOM",
+    "OFFICE365",
+    // E-sign
+    "DOCUSIGN",
+    "HELLOSIGN",
+    "PANDADOC",          // typo fix from PANDAODC
+    // Launcher
+    "RAYCAST",
   ]],
   ["Creative Tooling & Production", [
     "ADOBE",
-    "FIGMA",
     "CANVA",
     "ENVATO",
     "SHUTTERSTOCK",
@@ -245,12 +355,17 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
   ]],
   ["Marketing Tools & Automation", [
     "MAILCHIMP",
+    "KLAVIYO",
+    "ACTIVECAMPAIGN",
     "SEMRUSH",
     "AHREFS",
-    "KLAVIYO",
     "HOOTSUITE",
-    "ACTIVECAMPAIGN",
     "BUFFER",
+    "SPROUT SOCIAL",
+    "JASPER.AI",         // bare "JASPER" collides with restaurant names
+    "COPY.AI",
+    "DESCRIPT.COM",      // bare "DESCRIPT" matches "DESCRIPTION"
+    "VIMEO",
   ]],
   ["Marketing & Ads", [
     "FACEBK",
@@ -261,8 +376,15 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "TWITTER ADS",
     "TIKTOK ADS",
     "BING ADS",
+    "PINTEREST ADS",
+    "REDDIT ADS",
+    "ADROLL",
+    "TABOOLA",
+    "OUTBRAIN",
     "MARKETING PROMO",
   ]],
+
+  // ───────────────────────── T3: Operational with merchant overlap ─────────────────────────
   ["Materials & COGS", [
     "MCMASTER",
     "GRAINGER",
@@ -351,11 +473,11 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "STAMPS.COM",
     "STAMPS",
     "SHIPPIT",
-    "PRINTFUL",
-    "VISTAPRINT",
     "MOO.COM",
+    // PRINTFUL / VISTAPRINT moved to Corporate Subscriptions & Gifts per spec
   ]],
   ["Insurance & Risk Management", [
+    // Property / casualty / liability. Health carriers live in Payroll & Benefits.
     "INSURANCE",
     "GEICO",
     "PROGRESSIVE",
@@ -411,41 +533,61 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "BUDGET-CAR",
   ]],
   ["Office Infrastructure & IT", [
+    // Pruned duplicates that lived in Materials & COGS (which fires first):
+    // ULINE, ACE HARDWARE, TRUE VALUE, HARBOR FREIGHT, MANARDS — all dead here.
     "APPLE",
     "DELL",
     "CDW",
     "STAPLES",
     "OFFICE DEPOT",
     "OFFICEMAX",
-    "ULINE",
     "PAPER",
     "PRINTER",
     "INK",
     "DESK",
     "SHRED-IT",
-    "ACE HARDWARE",
-    "TRUE VALUE",
-    "HARBOR FREIGHT",
-    "MANARDS",
     "SAMS CLUB",
     "SAM'S CLUB",
   ]],
   ["Facilities, Rent & Utilities", [
+    // Real estate
     "REALTY",
     "PROP MGMT",
     "LANDLORD",
     "RENTAL",
-    "COMCAST BUSINESS",
-    "ATT BUSI",
-    "VERIZON WIRELESS",
-    "POWER",
-    "UTILITIES",
-    "ELECTRIC",
     "WEWORK",
     "REGUS",
     "SPACES",
+    // Telco
+    "COMCAST BUSINESS",
+    "COMCAST",
+    "XFINITY",
+    "CHARTER",
+    "SPECTRUM",
+    "COX COMM",
+    "ATT BUSI",
+    "AT&T",              // raw match preserves "&"; loose pass would strip
+    "VERIZON WIRELESS",
+    "VERIZON WIRE",
+    // Power / utility
+    "CONED",
+    "CON EDISON",
+    "PG&E",
+    "PGE",
+    "NATIONAL GRID",
+    "DUKE ENERGY",
+    "SOUTHERN CO",
+    "POWER",
+    "UTILITIES",
+    "ELECTRIC",
+    // Waste
+    "WASTE MGMT",
+    "REPUBLIC SERV",
   ]],
+
+  // ───────────────────────── T4: Catch-all retail / consumer / transit ─────────────────────────
   ["Consumer Goods & Big-Box Retail", [
+    // HOME DEPOT, LOWE'S, LOWES pruned — fire in Materials & COGS first
     "AMZN MKTP",
     "AMZN",
     "AMAZON",
@@ -453,27 +595,51 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "WALMART",
     "TARGET",
     "COSTCO",
-    "HOME DEPOT",
-    "LOWE'S",
-    "LOWES",
     "BEST BUY",
     "EBAY",
   ]],
   ["Corporate Subscriptions & Gifts", [
-    "LINKEDIN PREMIUM",
+    "LINKEDIN PREMIUM",  // matches "LINKEDIN PREM" too via substring
     "HBR",
     "WSJ",
+    "NEW YORK TIMES",
+    "NYTIMES",
+    "BLOOMBERG",
+    "STATISTA",
     "CORPORATE GIFTS",
     "STICKERMULE",
+    "PRINTFUL",          // moved from Logistics per spec
+    "VISTAPRINT",        // moved from Logistics per spec
   ]],
   ["Meals, Dining & Team Perks", [
+    // Coffee
     "STARBUCKS",
+    "SBUX",
     "DUNKIN",
+    "TIM HORTONS",
+    "DUTCH BROS",
+    "PEETS",
+    "CARIBOU",
+    // Delivery / grocery
     "DOORDASH",
-    "UBER EATS",
+    "UBER EATS",         // MUST precede Ground Transit "UBER"
     "UBEREATS",
     "GRUBHUB",
+    "SEAMLESS",
+    "INSTACART",
+    "SHIPT",
+    // Chains
+    "SWEETGREEN",
+    "CHIPOTLE",
+    "PANERA",
+    "AU BON PAIN",
+    "EINSTEIN BROS",
+    "WHOLEFOODS",
+    "WHOLE FOODS",
+    "TRADER JOE",
+    // POS prefixes
     "TST*",
+    // Generic descriptors
     "RESTAURANT",
     "RESTURANT",
     "REST.",
@@ -481,7 +647,6 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "CAFE",
     "BAKERY",
     "CATERING",
-    "SWEETGREEN",
     "BAR ",
     "GRILL",
     "PUB ",
@@ -493,26 +658,20 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "DINER",
     "PIZZERIA",
     "SUSHI",
-    "TIM HORTONS",
-    "DUTCH BROS",
-    "PEETS",
-    "CARIBOU",
-    "PANERA",
-    "AU BON PAIN",
-    "EINSTEIN BROS",
-    "INSTACART",
-    "SHIPT",
-    "WHOLEFOODS",
-    "WHOLE FOODS",
   ]],
   ["Ground Transit & Rideshare", [
-    "UBER",
+    "UBER",              // bare; UBER EATS already handled above in Meals
     "LYFT",
     "TAXI",
     "CAB ",
     "MTA",
+    "NYC TRANSIT",
+    "METRA",
     "AMTRAK",
     "SPOTHERO",
+    "PARKMOBILE",
+    "PASSPORT PARKING",
+    "PAYBYPHONE",
     "PARKING",
     "TOLL",
     "TOLLWAY",
@@ -520,9 +679,7 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "EZPASS",
     "E-Z PASS",
     "SUNPASS",
-    "PARKMOBILE",
-    "PASSPORT PARKING",
-    "PAYBYPHONE",
+    "FASTRAK",
   ]],
 ];
 
