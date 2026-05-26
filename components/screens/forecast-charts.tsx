@@ -272,8 +272,8 @@ export function ForecastChart({ data }: { data: ForecastPoint[] }) {
         <AreaChart data={data} margin={{ top: 10, right: 12, bottom: 0, left: -10 }}>
           <defs>
             <linearGradient id="proj" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#FFE600" stopOpacity={0.55} />
-              <stop offset="100%" stopColor="#FFE600" stopOpacity={0} />
+              <stop offset="0%" stopColor="#A855F7" stopOpacity={0.55} />
+              <stop offset="100%" stopColor="#A855F7" stopOpacity={0} />
             </linearGradient>
             <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#2E6CF6" stopOpacity={0.4} />
@@ -322,7 +322,7 @@ export function ForecastChart({ data }: { data: ForecastPoint[] }) {
             type="monotone"
             dataKey="projectedCogs"
             name="Projected COGS"
-            stroke="#FFE600"
+            stroke="#A855F7"
             fill="url(#proj)"
             strokeWidth={3}
           />

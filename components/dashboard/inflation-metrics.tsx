@@ -138,12 +138,9 @@ export function InflationMetrics({
   );
 
   const sortedMetrics = React.useMemo(() => {
-    return [...result.metrics].sort((a, b) => {
-      const aActive = a.oldTotal + a.newTotal > 0 ? 1 : 0;
-      const bActive = b.oldTotal + b.newTotal > 0 ? 1 : 0;
-      if (aActive !== bActive) return bActive - aActive;
-      return Math.abs(b.volumeDrift) - Math.abs(a.volumeDrift);
-    });
+    return [...result.metrics]
+      .filter((m) => m.oldTotal > 0 || m.newTotal > 0)
+      .sort((a, b) => Math.abs(b.volumeDrift) - Math.abs(a.volumeDrift));
   }, [result.metrics]);
 
   const currentLabel = `${MONTH_LABELS[targetMonth - 1]} ${targetYear}`;

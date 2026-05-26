@@ -18,14 +18,14 @@
     background-image:
       radial-gradient(1200px 600px at 85% -10%, rgba(46,108,246,0.10), transparent 60%),
       radial-gradient(900px 600px at -10% 110%, rgba(63,56,181,0.12), transparent 55%),
-      radial-gradient(700px 400px at 50% 120%, rgba(255,230,0,0.05), transparent 60%);
+      radial-gradient(800px 500px at 50% 110%, rgba(168,85,247,0.07), transparent 65%);
     background-attachment: fixed;
   }
 
 
   ::selection {
-    background: #FFE600;
-    color: #15100D;
+    background: rgba(139, 92, 246, 0.25);
+    color: #F5E9D7;
   }
 }
 

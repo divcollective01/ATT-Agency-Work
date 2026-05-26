@@ -123,6 +123,11 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "INTEREST EXP",
     "FINANCE CHG",
     "RET RETURNED",
+    // Generic fee / charge descriptors — broad T1 catch
+    "FEE",
+    "CHG",
+    "MISC",
+    "SVC",
   ]],
   ["Zelle & Peer Payments", [
     "ZELLE",
@@ -343,6 +348,14 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "PANDADOC",          // typo fix from PANDAODC
     // Launcher
     "RAYCAST",
+    // Generic SaaS/web descriptors — broad T2 catch
+    "SOFTWARE",
+    "SUBSCRIPTION",
+    "PLATFORM",
+    "DIGITAL",
+    "TECH",
+    "CLOUD",
+    "APP",
   ]],
   ["Creative Tooling & Production", [
     "ADOBE",
@@ -597,6 +610,12 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "COSTCO",
     "BEST BUY",
     "EBAY",
+    // Generic retail descriptors — broad T4 catch
+    "STORE",
+    "MART",
+    "SHOP",
+    "MERCHANT",
+    "PAYMENT",
   ]],
   ["Corporate Subscriptions & Gifts", [
     "LINKEDIN PREMIUM",  // matches "LINKEDIN PREM" too via substring
@@ -658,6 +677,11 @@ const BUCKET_RULES: ReadonlyArray<readonly [ExpenseCategory, readonly string[]]>
     "DINER",
     "PIZZERIA",
     "SUSHI",
+    // Generic food/grocery descriptors — broad T4 catch
+    "FOOD",
+    "MARKET",
+    "GROCER",
+    "GROCERY",
   ]],
   ["Ground Transit & Rideshare", [
     "UBER",              // bare; UBER EATS already handled above in Meals

@@ -4,7 +4,6 @@ import { useCallback, useState } from "react";
 import { Check, Plug, Loader2 } from "lucide-react";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { useTellerConnection } from "./connection-context";
-import type { TellerSyncData } from "@/lib/plaid-types";
 
 type TellerEnrollment = {
   accessToken: string;
@@ -53,8 +52,7 @@ export function ConnectTellerButton({
     loading: syncLoading,
     institutionName,
     markConnected,
-    setTellerData,
-    setLoading: setSyncLoading,
+    syncTellerData,
   } = useTellerConnection();
 
   const [opening, setOpening] = useState(false);
@@ -85,24 +83,11 @@ export function ConnectTellerButton({
         const institution = enrollment.enrollment?.institution?.name ?? null;
         markConnected(enrollment.accessToken, institution);
         setOpening(false);
-        setSyncLoading(true);
         try {
-          const res = await fetch("/api/teller/sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ accessToken: enrollment.accessToken }),
-          });
-          if (!res.ok) {
-            const err = (await res.json().catch(() => ({}))) as { error?: string };
-            throw new Error(err.error ?? `Sync failed (${res.status})`);
-          }
-          const data = (await res.json()) as TellerSyncData;
-          setTellerData(data);
+          await syncTellerData(enrollment.accessToken);
         } catch (e) {
           console.warn("[Teller] sync error:", e);
           setError(e instanceof Error ? e.message : "Teller sync failed");
-        } finally {
-          setSyncLoading(false);
         }
       },
       onExit: () => {
@@ -115,7 +100,7 @@ export function ConnectTellerButton({
     });
 
     tellerConnect.open();
-  }, [connected, markConnected, setTellerData, setSyncLoading]);
+  }, [connected, markConnected, syncTellerData]);
 
   if (connected) {
     return (

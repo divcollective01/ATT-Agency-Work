@@ -6,6 +6,7 @@ import { AnonymousAuthProvider } from "@/components/auth/anonymous-auth-provider
 import { Sidebar } from "@/components/sidebar";
 import { Ticker } from "@/components/ticker";
 import { COPY } from "@/lib/copy";
+import { LegalFooter } from "@/components/legal/legal-footer";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -37,9 +38,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AnonymousAuthProvider>
           <div className="flex min-h-screen">
             <Sidebar />
-            <main className="flex-1 min-w-0">
+            <main className="flex-1 min-w-0 flex flex-col">
               <Ticker />
               <div className="px-6 md:px-10 lg:px-14 pb-24 pt-8">{children}</div>
+              <LegalFooter />
             </main>
           </div>
           <Script src="https://cdn.teller.io/connect/connect.js" strategy="lazyOnload" />

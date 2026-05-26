@@ -38,9 +38,9 @@ const config: Config = {
           deep: "#1F1A6E"
         },
         vibrant: {
-          DEFAULT: "#FFE600",
-          soft: "#FFF06A",
-          deep: "#C9B400"
+          DEFAULT: "#A855F7",
+          soft: "#C084FC",
+          deep: "#7E22CE"
         },
         hotpink: {
           DEFAULT: "#FF3B8A",
@@ -54,7 +54,7 @@ const config: Config = {
         muted: "#2F211A",
         "muted-foreground": "#A8927A",
         border: "#3D2B22",
-        ring: "#FFE600"
+        ring: "#A855F7"
       },
       fontFamily: {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
@@ -72,7 +72,7 @@ const config: Config = {
         "3xl": "2.25rem"
       },
       boxShadow: {
-        glow: "0 0 0 1px rgba(255,230,0,0.25), 0 12px 40px -10px rgba(255,230,0,0.35)",
+        glow: "0 0 0 1px rgba(168,85,247,0.25), 0 12px 40px -10px rgba(168,85,247,0.35)",
         card: "0 1px 0 rgba(255,255,255,0.04) inset, 0 30px 60px -30px rgba(0,0,0,0.6)"
       },
       keyframes: {
@@ -81,8 +81,8 @@ const config: Config = {
           "100%": { transform: "translateX(-50%)" }
         },
         "pulse-glow": {
-          "0%, 100%": { boxShadow: "0 0 0 0 rgba(255,230,0,0.55)" },
-          "50%": { boxShadow: "0 0 0 14px rgba(255,230,0,0)" }
+          "0%, 100%": { boxShadow: "0 0 0 0 rgba(168,85,247,0.55)" },
+          "50%": { boxShadow: "0 0 0 14px rgba(168,85,247,0)" }
         }
       },
       animation: {
