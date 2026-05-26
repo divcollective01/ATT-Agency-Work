@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { Fraunces, Inter } from "next/font/google";
 import "./globals.css";
+import { AnonymousAuthProvider } from "@/components/auth/anonymous-auth-provider";
 import { Sidebar } from "@/components/sidebar";
 import { Ticker } from "@/components/ticker";
 import { COPY } from "@/lib/copy";
@@ -33,14 +34,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${fraunces.variable} dark`}>
       <body className="min-h-screen bg-cocoa-950 text-cream">
-        <div className="flex min-h-screen">
-          <Sidebar />
-          <main className="flex-1 min-w-0">
-            <Ticker />
-            <div className="px-6 md:px-10 lg:px-14 pb-24 pt-8">{children}</div>
-          </main>
-        </div>
-        <Script src="https://cdn.teller.io/connect/connect.js" strategy="lazyOnload" />
+        <AnonymousAuthProvider>
+          <div className="flex min-h-screen">
+            <Sidebar />
+            <main className="flex-1 min-w-0">
+              <Ticker />
+              <div className="px-6 md:px-10 lg:px-14 pb-24 pt-8">{children}</div>
+            </main>
+          </div>
+          <Script src="https://cdn.teller.io/connect/connect.js" strategy="lazyOnload" />
+        </AnonymousAuthProvider>
       </body>
     </html>
   );
