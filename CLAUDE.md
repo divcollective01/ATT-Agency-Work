@@ -4,7 +4,7 @@
 - Framework: Next.js (App Router, TypeScript)
 - Database/Auth: Supabase (PostgreSQL)
 - Analytics UI: Tailwind CSS + Shadcn/ui + Recharts (for financial data streams)
-- Data Feeds: FRED API (Inflation) + Plaid (Banking API)
+- Data Feeds: FRED API (Inflation) + Teller.io (Banking API)
 
 ## Database Schema Goals
 - `users`: Track business profiles, current target profit margins.
