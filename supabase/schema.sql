@@ -18,7 +18,7 @@ create table if not exists public.users (
 -- 2. expenses (Plaid bucketed feed)
 create table if not exists public.expenses (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references public.users(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
   plaid_transaction_id text unique,
   bucket text not null,
   merchant text,
@@ -34,7 +34,7 @@ create index if not exists expenses_user_bucket_idx
 -- 3. material_costs — hybrid FRED / Custom override model
 create table if not exists public.material_costs (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references public.users(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
   name text not null,
   unit text not null default 'unit',
   quantity numeric(12,4) not null default 1,
@@ -47,6 +47,48 @@ create table if not exists public.material_costs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Enforce NOT NULL on user_id for existing installs that may have been
+-- created before this constraint was added. Rows with null user_id are
+-- orphaned and safe to delete (they can't be accessed via RLS anyway).
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'expenses'
+      and column_name = 'user_id' and is_nullable = 'YES'
+  ) then
+    delete from public.expenses where user_id is null;
+    alter table public.expenses alter column user_id set not null;
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'material_costs'
+      and column_name = 'user_id' and is_nullable = 'YES'
+  ) then
+    delete from public.material_costs where user_id is null;
+    alter table public.material_costs alter column user_id set not null;
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'predictive_snapshots'
+      and column_name = 'user_id' and is_nullable = 'YES'
+  ) then
+    delete from public.predictive_snapshots where user_id is null;
+    alter table public.predictive_snapshots alter column user_id set not null;
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'predictive_snapshots'
+      and column_name = 'material_id' and is_nullable = 'YES'
+  ) then
+    delete from public.predictive_snapshots where material_id is null;
+    alter table public.predictive_snapshots alter column material_id set not null;
+  end if;
+end $$;
 
 -- Backfill new columns on existing installs
 alter table public.material_costs
@@ -77,8 +119,8 @@ create index if not exists material_costs_created_idx
 -- 4. predictive_snapshots
 create table if not exists public.predictive_snapshots (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references public.users(id) on delete cascade,
-  material_id uuid references public.material_costs(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  material_id uuid not null references public.material_costs(id) on delete cascade,
   horizon_days int not null check (horizon_days in (30, 60, 90)),
   projected_unit_cost numeric(12,4) not null,
   projected_delta_pct numeric(6,3) not null,
@@ -104,6 +146,36 @@ create index if not exists merchant_category_overrides_user_merchant_idx
   on public.merchant_category_overrides (user_id, merchant_name);
 create index if not exists merchant_category_overrides_user_description_idx
   on public.merchant_category_overrides (user_id, description_pattern);
+
+-- Ensure at most one override per (user, merchant_name) and one per
+-- (user, description_pattern). These partial unique indexes mirror the
+-- delete-then-insert upsert pattern in actions.ts and prevent duplicates
+-- from concurrent requests.
+create unique index if not exists merchant_category_overrides_user_merchant_uniq
+  on public.merchant_category_overrides (user_id, merchant_name)
+  where merchant_name is not null;
+create unique index if not exists merchant_category_overrides_user_desc_uniq
+  on public.merchant_category_overrides (user_id, description_pattern)
+  where description_pattern is not null;
+
+-- Auto-insert a public.users profile whenever auth creates a new user
+-- (including anonymous sign-ins). Without this trigger, anonymous users
+-- have no matching public.users row, so every user_id FK lookup in the
+-- sync route and material actions returns null and silently skips persistence.
+create or replace function public.handle_new_auth_user()
+returns trigger language plpgsql security definer as $$
+begin
+  insert into public.users (auth_user_id, business_name)
+  values (new.id, coalesce(new.email, 'Anonymous'))
+  on conflict (auth_user_id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_auth_user();
 
 -- Auto-update timestamps
 create or replace function public.touch_updated_at()

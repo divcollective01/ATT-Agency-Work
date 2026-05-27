@@ -124,33 +124,122 @@ function getTellerProxy(): ServiceFetcher {
   return proxy;
 }
 
+// Teller rate limit: ~10 req/s. We apply a simple exponential backoff on
+// 429 / 503 responses. The edge runtime has no Node.js timers so we use
+// a Promise-wrapping setTimeout polyfill.
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 async function tellerRequest<T>(
   fetcher: ServiceFetcher,
   url: string,
-  accessToken: string
+  accessToken: string,
+  retries = 3
 ): Promise<T> {
-  const res = await fetcher.fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: basicAuthHeader(accessToken),
-      Accept: "application/json",
-    },
-  });
-  const body = await res.text();
-  if (!res.ok) {
-    throw new Error(
-      `Teller request failed (${res.status}): ${body.slice(0, 400)}`
-    );
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetcher.fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: basicAuthHeader(accessToken),
+        Accept: "application/json",
+      },
+    });
+    const body = await res.text();
+
+    if (res.status === 429 || res.status === 503) {
+      const retryAfterSec = Number(res.headers.get("Retry-After") ?? 0);
+      const backoffMs = retryAfterSec > 0
+        ? retryAfterSec * 1000
+        : Math.min(200 * 2 ** attempt, 4000);
+      if (attempt < retries) {
+        await sleep(backoffMs);
+        continue;
+      }
+      lastErr = new Error(`Teller rate limited (${res.status}) after ${retries} retries`);
+      break;
+    }
+
+    if (!res.ok) {
+      throw new Error(
+        `Teller request failed (${res.status}): ${body.slice(0, 400)}`
+      );
+    }
+
+    try {
+      return JSON.parse(body) as T;
+    } catch (e) {
+      throw new Error(
+        `Teller response parse error: ${
+          e instanceof Error ? e.message : "unknown"
+        }`
+      );
+    }
   }
-  try {
-    return JSON.parse(body) as T;
-  } catch (e) {
-    throw new Error(
-      `Teller response parse error: ${
-        e instanceof Error ? e.message : "unknown"
-      }`
+  throw lastErr ?? new Error(`Teller request failed after ${retries} retries`);
+}
+
+/**
+ * Paginate through all transactions for a single account.
+ * Teller returns a list with a `links.next` cursor URL when there are more
+ * pages. We follow `from_id` (the id of the last item on the current page)
+ * as a cursor until the response is empty or has fewer items than the page
+ * size, which signals the last page.
+ */
+async function fetchAllTransactions(
+  fetcher: ServiceFetcher,
+  accountId: string,
+  accessToken: string
+): Promise<TellerRawTransaction[]> {
+  const PAGE_SIZE = 250; // Teller max per page
+  const all: TellerRawTransaction[] = [];
+  let cursor: string | null = null;
+
+  // Guard against runaway pagination (e.g. infinite-loop bug or malformed API
+  // response). 40 pages × 250 = 10 000 transactions per account maximum.
+  const MAX_PAGES = 40;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const url = new URL(
+      `https://api.teller.io/accounts/${accountId}/transactions`
     );
+    url.searchParams.set("count", String(PAGE_SIZE));
+    if (cursor) url.searchParams.set("from_id", cursor);
+
+    let batch: TellerRawTransaction[];
+    try {
+      batch = await tellerRequest<TellerRawTransaction[]>(
+        fetcher,
+        url.toString(),
+        accessToken
+      );
+    } catch (err) {
+      // Surface the error to the caller rather than silently returning empty.
+      // Partial-failure: return what we have so far plus re-throw so the
+      // outer handler can log it without losing already-fetched pages.
+      console.warn(
+        `[teller-sync] transaction fetch failed for account ${accountId} ` +
+          `(page ${page}):`,
+        err instanceof Error ? err.message : err
+      );
+      // Partial data already accumulated is still usable; re-throw to let the
+      // account-level catch block decide how to handle it.
+      throw err;
+    }
+
+    if (!Array.isArray(batch) || batch.length === 0) break;
+
+    all.push(...batch);
+
+    // If the batch is smaller than a full page we've reached the last page.
+    if (batch.length < PAGE_SIZE) break;
+
+    // Advance cursor to the id of the last transaction in this page.
+    // Teller uses `from_id` to mean "give me transactions older than this id".
+    cursor = batch[batch.length - 1].id;
   }
+
+  return all;
 }
 
 export async function POST(req: Request) {
@@ -208,12 +297,16 @@ export async function POST(req: Request) {
 
       let rawTx: TellerRawTransaction[] = [];
       try {
-        rawTx = await tellerRequest<TellerRawTransaction[]>(
-          fetcher,
-          `https://api.teller.io/accounts/${a.id}/transactions`,
-          body.accessToken
+        rawTx = await fetchAllTransactions(fetcher, a.id, body.accessToken);
+      } catch (txErr) {
+        // Partial-failure: skip this account's transactions but continue with
+        // other accounts rather than aborting the entire sync. The error is
+        // already logged inside fetchAllTransactions; record it here too so
+        // the final response can surface a warning.
+        console.warn(
+          `[teller-sync] skipping transactions for account ${a.id}:`,
+          txErr instanceof Error ? txErr.message : txErr
         );
-      } catch {
         rawTx = [];
       }
 

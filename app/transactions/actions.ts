@@ -60,29 +60,22 @@ export async function setTransactionCategoryOverride(
   const supabase = createSupabaseServerClient();
   const payload = {
     user_id: userId,
-    merchant_name: merchantName,
+    merchant_name: merchantName ?? null,
     description_pattern: merchantName ? null : descriptionPattern,
     custom_bucket: customBucket as ExpenseCategory,
   };
 
-  const deleteQuery = supabase
+  // Use upsert on the unique partial index so the operation is atomic and
+  // idempotent. Concurrent calls with the same key converge to the latest
+  // custom_bucket rather than creating duplicate rows or racing on
+  // delete+insert.
+  const conflictCol = merchantName ? "merchant_name" : "description_pattern";
+  const { error } = await supabase
     .from("merchant_category_overrides")
-    .delete()
-    .eq("user_id", userId);
-
-  const { error: deleteError } = merchantName
-    ? await deleteQuery.eq("merchant_name", merchantName)
-    : await deleteQuery.eq("description_pattern", descriptionPattern);
-
-  if (deleteError) {
-    console.error("[transactions] override cleanup error:", deleteError.message);
-    return { ok: false, error: deleteError.message };
-  }
-
-  const { error } = await supabase.from("merchant_category_overrides").insert(payload);
+    .upsert(payload, { onConflict: `user_id,${conflictCol}`, ignoreDuplicates: false });
 
   if (error) {
-    console.error("[transactions] override insert error:", error.message);
+    console.error("[transactions] override upsert error:", error.message);
     return { ok: false, error: error.message };
   }
 

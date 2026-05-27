@@ -182,7 +182,7 @@ const BUCKET_RULES: ReadonlyArray<BucketRule> = [
     tok("NAVY FEDERAL"), tok("PENFED"), tok("BREX"), tok("RAMP"),
     tok("MERCURY"), tok("NOVO"), tok("RELAY"), tok("RHO"),
     tok("FOREIGN TRANSACTION"), tok("INTEREST EXPENSE"),
-    tok("CREDIT UNION"), tok("UNION BANK"), tok("FED INT"), tok("WIRE IN"),
+    tok("CREDIT UNION"), tok("UNION BANK"), tok("FED INT"),
   ] },
   { bucket: "Zelle & Peer Payments", patterns: [
     tok("ZELLE"), tok("PEER TO PEER"), tok("VENMO"), tok("CASH APP"),
@@ -198,7 +198,7 @@ const BUCKET_RULES: ReadonlyArray<BucketRule> = [
     tok("INTL WIRE"), tok("REMITLY"), tok("PAYONEER"),
     tok("WESTERN UNION"), tok("XOOM"), tok("WISE.COM"),
     tok("TRANSFERWISE"), tok("CURRENCYFAIR"),
-    tok("ACH DEBIT"), tok("DEBIT TRANSFER"),
+    tok("ACH DEBIT"), tok("DEBIT TRANSFER"), tok("WIRE IN"),
   ] },
   { bucket: "Corporate Card Settlements", patterns: [
     tok("CORP CARD"), tok("CREDIT CARD PMNT"), tok("AMEX EBILL"),
@@ -528,11 +528,21 @@ export function classifyBucket(
   t: ClassifiableTxn,
   overrides: readonly MerchantCategoryOverride[] = []
 ): ExpenseCategory {
-  if (isKnownBucket(t.customBucket)) return t.customBucket;
-
+  // User DB overrides take absolute priority — they must be checked before any
+  // pre-computed bucket on the transaction object. `t.customBucket` holds only
+  // the bucket that was assigned at last sync; if the user has since created an
+  // override it would be silently ignored if we returned early here.
   const overrideBucket = findCategoryOverride(t, overrides);
   if (overrideBucket) return overrideBucket;
+
+  // Inflow detection comes next (before regex) so revenue/deposit transactions
+  // are never mis-bucketed as expenses.
   if (isInflowTransaction(t)) return REVENUE_BUCKET;
+
+  // Pre-computed bucket on the transaction (set at sync time or by a prior
+  // classification pass). Only used as a hint when no override or inflow rule
+  // matched — and only when it's a known named bucket (not a stale fallback).
+  if (isKnownBucket(t.customBucket)) return t.customBucket;
   if (isKnownBucket(t.bucket)) return t.bucket;
 
   // Pass 1 — merchant fields only. `merchantName` and the bank's free-text

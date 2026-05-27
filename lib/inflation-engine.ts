@@ -130,19 +130,21 @@ export function runInflationEngine(
       const rawOldTotal = oldRaw > 0 ? oldRaw : 0;
       const newTotal = newRaw > 0 ? newRaw : 0;
 
-      // SANDBOX SAFETY PROTECTION:
-      // When Teller sandbox returns $0 for the historical window but the
-      // current window has spend, synthesize a baseline so the math nodes
-      // always have healthy data vectors and the stacked mix bars render
-      // a proper split instead of a flat 100% spike rail.
-      let oldTotal = rawOldTotal;
+      // SANDBOX / NEW-SPEND VISUAL BASELINE:
+      // When the historical window has $0 for a category but the current
+      // window has spend, synthesize a display-only baseline so the mix bar
+      // renders a split instead of a flat 100% operational rail. The
+      // synthesized value is used ONLY for inflationShare / operationalShare
+      // (visual mix bar). All real math — inflationImpact, adjustedBaseline,
+      // volumeDrift, driftPercent — uses rawOldTotal (zero), so the summary
+      // totals are not polluted and status correctly reads "new".
       let synthesizedBaseline = false;
       if (rawOldTotal === 0 && newTotal > 0) {
-        oldTotal = newTotal * SYNTHESIS_RATIO;
         synthesizedBaseline = true;
         synthesizedCategoryCount += 1;
       }
 
+      const oldTotal = rawOldTotal;
       const inflationImpact = oldTotal * (safeRate / 100);
       const adjustedBaseline = oldTotal + inflationImpact;
       const volumeDrift = newTotal - adjustedBaseline;
@@ -154,10 +156,17 @@ export function runInflationEngine(
             ? 100
             : 0;
 
+      // For the visual mix bar, use the synthesis ratio to avoid a flat
+      // 100% operational bar for genuinely new spend categories.
+      const visualOldTotal = synthesizedBaseline
+        ? newTotal * SYNTHESIS_RATIO
+        : oldTotal;
+      const visualInflationImpact = visualOldTotal * (safeRate / 100);
+
       let inflationShare = 0;
       let operationalShare = 0;
       if (newTotal > 0) {
-        const capInflation = Math.min(Math.max(inflationImpact, 0), newTotal);
+        const capInflation = Math.min(Math.max(visualInflationImpact, 0), newTotal);
         inflationShare = (capInflation / newTotal) * 100;
         operationalShare = Math.max(0, 100 - inflationShare);
       }

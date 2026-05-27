@@ -79,7 +79,7 @@ export function yoyDelta(observations: FredObservation[]) {
   const yearAgo = observations.find(
     (o) => o.value !== null && new Date(o.date) <= yearAgoTarget
   );
-  if (!yearAgo || yearAgo.value === null) return null;
+  if (!yearAgo || yearAgo.value === null || yearAgo.value === 0) return null;
   return {
     latestDate: latest.date,
     latestValue: latest.value,
