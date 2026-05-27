@@ -148,15 +148,13 @@ create index if not exists merchant_category_overrides_user_description_idx
   on public.merchant_category_overrides (user_id, description_pattern);
 
 -- Ensure at most one override per (user, merchant_name) and one per
--- (user, description_pattern). These partial unique indexes mirror the
--- delete-then-insert upsert pattern in actions.ts and prevent duplicates
--- from concurrent requests.
+-- (user, description_pattern). These regular unique indexes are inferable by
+-- PostgREST upsert ON CONFLICT targets while still allowing multiple NULL
+-- values for the inactive override dimension.
 create unique index if not exists merchant_category_overrides_user_merchant_uniq
-  on public.merchant_category_overrides (user_id, merchant_name)
-  where merchant_name is not null;
+  on public.merchant_category_overrides (user_id, merchant_name);
 create unique index if not exists merchant_category_overrides_user_desc_uniq
-  on public.merchant_category_overrides (user_id, description_pattern)
-  where description_pattern is not null;
+  on public.merchant_category_overrides (user_id, description_pattern);
 
 -- Auto-insert a public.users profile whenever auth creates a new user
 -- (including anonymous sign-ins). Without this trigger, anonymous users
