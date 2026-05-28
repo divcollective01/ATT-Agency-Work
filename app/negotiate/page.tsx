@@ -1,22 +1,41 @@
 import { NegotiationToolScreen } from "@/components/screens/negotiation-tool";
 import { loadEnrichedMaterials } from "@/lib/materials";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
  * Screen 06 — Vendor Price Negotiation Tool
  * Route: /negotiate
  *
  * Required env vars for live features:
- *   FRED_API_KEY       St. Louis Fed API key (for live PPI benchmarks)
- *   SENDGRID_API_KEY   SendGrid API key (for one-click email send)
- *   RESEND_API_KEY     Resend API key (alternative to SendGrid)
- *
- * Email send is currently copy-to-clipboard only.
+ *   FRED_API_KEY    St. Louis Fed API key (for live PPI benchmarks)
+ *   RESEND_API_KEY  Resend API key — emails sent FROM noreply@attagency.co,
+ *                   reply-to set to the authenticated user's email address.
  */
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 export default async function NegotiatePage() {
-  const rows = await loadEnrichedMaterials();
+  const supabase = createSupabaseServerClient();
+
+  // Fetch materials and the user's profile in parallel
+  const [rows, authResult] = await Promise.all([
+    loadEnrichedMaterials(),
+    supabase.auth.getUser(),
+  ]);
+
+  const authUser = authResult.data.user;
+  let businessName = "Your Company";
+  let userEmail = authUser?.email ?? "";
+
+  if (authUser) {
+    const { data: userRow } = await supabase
+      .from("users")
+      .select("business_name")
+      .eq("auth_user_id", authUser.id)
+      .maybeSingle();
+    if (userRow?.business_name) businessName = userRow.business_name;
+  }
+
   const initialMaterials = rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -27,5 +46,12 @@ export default async function NegotiatePage() {
     fredLabel: r.fred_ppi_code ?? "Custom",
     annualDriftPct: r.annualDriftPct ?? 0,
   }));
-  return <NegotiationToolScreen initialMaterials={initialMaterials} />;
+
+  return (
+    <NegotiationToolScreen
+      initialMaterials={initialMaterials}
+      businessName={businessName}
+      userEmail={userEmail}
+    />
+  );
 }

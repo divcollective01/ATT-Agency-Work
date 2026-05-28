@@ -93,9 +93,9 @@ function generateEmailSubject(v: VendorEntry): string {
   return `Price Increase Discussion — ${v.material}`;
 }
 
-function generateEmailBody(v: VendorEntry): string {
+function generateEmailBody(v: VendorEntry, businessName: string): string {
   const c = computeEntry(v);
-  const companyName = "ATT Agency";
+  const companyName = businessName;
   const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
   return `Dear ${v.contactName || "[Vendor Contact]"},
@@ -130,8 +130,8 @@ Data source: St. Louis Federal Reserve FRED — ${v.fredLabel} (${v.fredCode})
 Retrieved: ${today}`;
 }
 
-function generateEmailDraft(v: VendorEntry): string {
-  return `Subject: ${generateEmailSubject(v)}\n\n${generateEmailBody(v)}`;
+function generateEmailDraft(v: VendorEntry, businessName: string): string {
+  return `Subject: ${generateEmailSubject(v)}\n\n${generateEmailBody(v, businessName)}`;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -306,7 +306,7 @@ function MathBreakdown({
 
 function VendorCard({
   vendor,
-  senderFrom,
+  businessName,
   onStatusChange,
   onVendorNameChange,
   onQuotedCostChange,
@@ -314,7 +314,7 @@ function VendorCard({
   onContactEmailChange,
 }: {
   vendor: VendorEntry;
-  senderFrom: string;
+  businessName: string;
   onStatusChange: (id: string, status: NegotiationStatus) => void;
   onVendorNameChange: (id: string, value: string) => void;
   onQuotedCostChange: (id: string, value: number) => void;
@@ -334,7 +334,7 @@ function VendorCard({
   const canSend = hasQuote && vendor.contactEmail.trim().length > 0;
 
   function copyEmail() {
-    navigator.clipboard.writeText(generateEmailDraft(vendor)).then(() => {
+    navigator.clipboard.writeText(generateEmailDraft(vendor, businessName)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     });
@@ -351,8 +351,7 @@ function VendorCard({
         body: JSON.stringify({
           to: vendor.contactEmail.trim(),
           subject: generateEmailSubject(vendor),
-          body: generateEmailBody(vendor),
-          from: senderFrom.trim() || undefined,
+          body: generateEmailBody(vendor, businessName),
         }),
       });
       const data = await res.json();
@@ -526,7 +525,7 @@ function VendorCard({
                 </div>
               </div>
               <pre className="rounded-2xl border border-cocoa-700 bg-cocoa-950 px-5 py-4 text-xs text-cream-dim font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto max-h-[400px] overflow-y-auto">
-                {generateEmailDraft(vendor)}
+                {generateEmailDraft(vendor, businessName)}
               </pre>
               {sendStatus && (
                 <div
@@ -547,7 +546,7 @@ function VendorCard({
               )}
               <p className="text-xs text-cream-mute mt-2 flex items-center gap-1.5">
                 <Info className="size-3.5" />
-                Replace [Your Name] before sending. From-address is set at the top of this screen.
+                Sent from <span className="font-mono text-vibrant-soft">noreply@attagency.co</span> · vendor replies go to your account email.
               </p>
             </div>
           )}
@@ -841,29 +840,16 @@ function AddVendorForm({ onAdd, onClose }: { onAdd: (v: VendorEntry) => Promise<
 
 export function NegotiationToolScreen({
   initialMaterials,
+  businessName,
+  userEmail,
 }: {
   initialMaterials: InitialMaterial[];
+  businessName: string;
+  userEmail: string;
 }) {
   const [vendors, setVendors] = useState<VendorEntry[]>([]);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [sortBy, setSortBy] = useState<"overage" | "date">("overage");
-  // Resend "from" address. Default uses Resend's shared sandbox sender so the
-  // app works out of the box. Replace with `Your Name <you@yourdomain.com>`
-  // once you verify a domain in Resend → Domains.
-  const [senderFrom, setSenderFrom] = useState<string>("Profit Shield <onboarding@resend.dev>");
-
-  // Persist sender across sessions so the user doesn't re-enter it each visit.
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("ps:negotiate:sender");
-      if (saved) setSenderFrom(saved);
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try {
-      localStorage.setItem("ps:negotiate:sender", senderFrom);
-    } catch {}
-  }, [senderFrom]);
 
   // Hydrate vendors from server-supplied materials as un-negotiated rows.
   useEffect(() => {
@@ -1037,24 +1023,19 @@ export function NegotiationToolScreen({
         }
       />
 
-      {/* Sender configuration */}
-      <div className="rounded-2xl border border-cocoa-700 bg-cocoa-900/70 px-5 py-4 flex items-center gap-4 flex-wrap">
+      {/* Email sender info */}
+      <div className="rounded-2xl border border-cocoa-700 bg-cocoa-900/70 px-5 py-4 flex items-center gap-3 flex-wrap">
         <Mail className="size-4 text-vibrant shrink-0" />
-        <div className="flex-1 min-w-[240px]">
-          <label className="text-[10px] uppercase tracking-[0.18em] text-cream-mute block mb-1">
-            Send from (Resend)
-          </label>
-          <input
-            type="text"
-            value={senderFrom}
-            onChange={(e) => setSenderFrom(e.target.value)}
-            placeholder="Your Name <you@yourdomain.com>"
-            className="h-9 w-full rounded-xl border border-cocoa-700 bg-cocoa-950 px-3 text-sm text-cream placeholder:text-cream-mute focus:outline-none focus:ring-1 focus:ring-vibrant focus:border-vibrant font-mono"
-          />
-        </div>
-        <p className="text-[11px] text-cream-mute max-w-sm leading-snug">
-          Defaults to Resend&apos;s sandbox sender (works immediately, &ldquo;via resend.dev&rdquo; footer).
-          Switch to your verified domain once added at resend.com/domains.
+        <p className="text-sm text-cream-dim">
+          Negotiation emails send from{" "}
+          <span className="font-mono text-vibrant-soft">noreply@attagency.co</span>
+          {userEmail && (
+            <>
+              {" "}with replies routed to{" "}
+              <span className="font-mono text-cream">{userEmail}</span>
+            </>
+          )}
+          {" "}— signed as <span className="text-cream">{businessName}</span>.
         </p>
       </div>
 
@@ -1153,7 +1134,7 @@ export function NegotiationToolScreen({
             <VendorCard
               key={vendor.id}
               vendor={vendor}
-              senderFrom={senderFrom}
+              businessName={businessName}
               onStatusChange={updateStatus}
               onVendorNameChange={updateVendorName}
               onQuotedCostChange={updateQuotedCost}
@@ -1169,9 +1150,9 @@ export function NegotiationToolScreen({
         <p className="text-xs text-cream-mute leading-relaxed">
           Vendor rows are populated from your tracked materials. Enter the quoted unit cost
           received from the supplier — overage vs. live FRED PPI is computed instantly via{" "}
-          <code className="text-vibrant-soft">FRED_API_KEY</code>. Email drafts can be sent
-          automatically by configuring <code className="text-vibrant-soft">SENDGRID_API_KEY</code>{" "}
-          or <code className="text-vibrant-soft">RESEND_API_KEY</code>.
+          <code className="text-vibrant-soft">FRED_API_KEY</code>. One-click email sends via{" "}
+          <code className="text-vibrant-soft">RESEND_API_KEY</code> using your verified{" "}
+          <code className="text-vibrant-soft">attagency.co</code> domain.
           Use &quot;Import CSV&quot; or &quot;Flag vendor&quot; to add standalone price hikes
           that persist across sessions via Supabase.
         </p>
