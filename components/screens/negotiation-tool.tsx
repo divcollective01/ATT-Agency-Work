@@ -25,6 +25,8 @@ import {
   ChevronUp,
   Filter,
   Info,
+  Send,
+  Loader2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -81,14 +83,16 @@ function computeEntry(v: VendorEntry) {
 
 // ── Email draft generator ──────────────────────────────────────────────────────
 
-function generateEmailDraft(v: VendorEntry): string {
+function generateEmailSubject(v: VendorEntry): string {
+  return `Price Increase Discussion — ${v.material}`;
+}
+
+function generateEmailBody(v: VendorEntry): string {
   const c = computeEntry(v);
   const companyName = "ATT Agency";
   const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
-  return `Subject: Price Increase Discussion — ${v.material}
-
-Dear ${v.contactName || "[Vendor Contact]"},
+  return `Dear ${v.contactName || "[Vendor Contact]"},
 
 Thank you for your continued partnership with ${companyName}. I'm writing regarding the recent pricing update on ${v.material} (quoted on ${new Date(v.dateQuoted).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}).
 
@@ -118,6 +122,10 @@ ${companyName}
 ---
 Data source: St. Louis Federal Reserve FRED — ${v.fredLabel} (${v.fredCode})
 Retrieved: ${today}`;
+}
+
+function generateEmailDraft(v: VendorEntry): string {
+  return `Subject: ${generateEmailSubject(v)}\n\n${generateEmailBody(v)}`;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -292,6 +300,7 @@ function MathBreakdown({
 
 function VendorCard({
   vendor,
+  senderFrom,
   onStatusChange,
   onVendorNameChange,
   onQuotedCostChange,
@@ -299,6 +308,7 @@ function VendorCard({
   onContactEmailChange,
 }: {
   vendor: VendorEntry;
+  senderFrom: string;
   onStatusChange: (id: string, status: NegotiationStatus) => void;
   onVendorNameChange: (id: string, value: string) => void;
   onQuotedCostChange: (id: string, value: number) => void;
@@ -308,17 +318,49 @@ function VendorCard({
   const [expanded, setExpanded] = useState(false);
   const [showEmail, setShowEmail] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendStatus, setSendStatus] = useState<{ ok: boolean; message: string } | null>(null);
   const c = computeEntry(vendor);
   const cfg = STATUS_CONFIG[vendor.status];
   const StatusIcon = cfg.icon;
   const isOverage = c.overagePct > 0;
   const hasQuote = vendor.quotedUnitCost > 0;
+  const canSend = hasQuote && vendor.contactEmail.trim().length > 0;
 
   function copyEmail() {
     navigator.clipboard.writeText(generateEmailDraft(vendor)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     });
+  }
+
+  async function sendEmail() {
+    if (!canSend) return;
+    setSending(true);
+    setSendStatus(null);
+    try {
+      const res = await fetch("/api/email/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: vendor.contactEmail.trim(),
+          subject: generateEmailSubject(vendor),
+          body: generateEmailBody(vendor),
+          from: senderFrom.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.sent) {
+        setSendStatus({ ok: true, message: `Sent to ${vendor.contactEmail} · id ${data.id ?? "(no id)"}` });
+        onStatusChange(vendor.id, "in-progress");
+      } else {
+        setSendStatus({ ok: false, message: data.error ?? "Send failed" });
+      }
+    } catch (err: any) {
+      setSendStatus({ ok: false, message: err?.message ?? "Network error sending email" });
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -452,23 +494,54 @@ function VendorCard({
           {/* Email draft */}
           {showEmail && hasQuote && (
             <div className="mt-5">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                 <p className="text-[11px] uppercase tracking-[0.2em] text-cream-mute">
                   Negotiation email draft
                 </p>
-                <Button variant="ghost" size="sm" onClick={copyEmail}>
-                  <Copy className="size-3.5" />
-                  {copied ? "Copied!" : "Copy to clipboard"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={copyEmail}>
+                    <Copy className="size-3.5" />
+                    {copied ? "Copied!" : "Copy"}
+                  </Button>
+                  <Button
+                    variant="electric"
+                    size="sm"
+                    onClick={sendEmail}
+                    disabled={!canSend || sending}
+                    title={!canSend ? "Add a contact email above to enable sending" : undefined}
+                  >
+                    {sending ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Send className="size-3.5" />
+                    )}
+                    {sending ? "Sending…" : "Send via Resend"}
+                  </Button>
+                </div>
               </div>
               <pre className="rounded-2xl border border-cocoa-700 bg-cocoa-950 px-5 py-4 text-xs text-cream-dim font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto max-h-[400px] overflow-y-auto">
                 {generateEmailDraft(vendor)}
               </pre>
+              {sendStatus && (
+                <div
+                  className={cn(
+                    "mt-2 rounded-xl border px-3 py-2 text-xs flex items-start gap-2",
+                    sendStatus.ok
+                      ? "border-electric/40 bg-electric/10 text-electric-soft"
+                      : "border-hotpink/40 bg-hotpink/10 text-hotpink-soft"
+                  )}
+                >
+                  {sendStatus.ok ? (
+                    <CheckCircle2 className="size-3.5 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+                  )}
+                  <span className="leading-snug">{sendStatus.message}</span>
+                </div>
+              )}
               <p className="text-xs text-cream-mute mt-2 flex items-center gap-1.5">
                 <Info className="size-3.5" />
-                Fill in [Your Name] before sending. To enable one-click send, configure{" "}
-                <code className="text-vibrant-soft">SENDGRID_API_KEY</code> or{" "}
-                <code className="text-vibrant-soft">RESEND_API_KEY</code>.
+                Replace [Your Name] before sending. From-address is set at the top of this screen.
               </p>
             </div>
           )}
@@ -488,6 +561,23 @@ export function NegotiationToolScreen({
   const [vendors, setVendors] = useState<VendorEntry[]>([]);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [sortBy, setSortBy] = useState<"overage" | "date">("overage");
+  // Resend "from" address. Default uses Resend's shared sandbox sender so the
+  // app works out of the box. Replace with `Your Name <you@yourdomain.com>`
+  // once you verify a domain in Resend → Domains.
+  const [senderFrom, setSenderFrom] = useState<string>("Profit Shield <onboarding@resend.dev>");
+
+  // Persist sender across sessions so the user doesn't re-enter it each visit.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ps:negotiate:sender");
+      if (saved) setSenderFrom(saved);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("ps:negotiate:sender", senderFrom);
+    } catch {}
+  }, [senderFrom]);
 
   // Hydrate vendors from server-supplied materials as un-negotiated rows.
   useEffect(() => {
@@ -561,6 +651,27 @@ export function NegotiationToolScreen({
         headline={COPY.negotiate.headline}
         sub={COPY.negotiate.sub}
       />
+
+      {/* Sender configuration */}
+      <div className="rounded-2xl border border-cocoa-700 bg-cocoa-900/70 px-5 py-4 flex items-center gap-4 flex-wrap">
+        <Mail className="size-4 text-vibrant shrink-0" />
+        <div className="flex-1 min-w-[240px]">
+          <label className="text-[10px] uppercase tracking-[0.18em] text-cream-mute block mb-1">
+            Send from (Resend)
+          </label>
+          <input
+            type="text"
+            value={senderFrom}
+            onChange={(e) => setSenderFrom(e.target.value)}
+            placeholder="Your Name <you@yourdomain.com>"
+            className="h-9 w-full rounded-xl border border-cocoa-700 bg-cocoa-950 px-3 text-sm text-cream placeholder:text-cream-mute focus:outline-none focus:ring-1 focus:ring-vibrant focus:border-vibrant font-mono"
+          />
+        </div>
+        <p className="text-[11px] text-cream-mute max-w-sm leading-snug">
+          Defaults to Resend&apos;s sandbox sender (works immediately, &ldquo;via resend.dev&rdquo; footer).
+          Switch to your verified domain once added at resend.com/domains.
+        </p>
+      </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -657,6 +768,7 @@ export function NegotiationToolScreen({
             <VendorCard
               key={vendor.id}
               vendor={vendor}
+              senderFrom={senderFrom}
               onStatusChange={updateStatus}
               onVendorNameChange={updateVendorName}
               onQuotedCostChange={updateQuotedCost}

@@ -11,7 +11,8 @@
   // (scope: Production, type: Plain text) for the client bundle to pick
   // it up during the Pages build.
   "vars": {
-    "NEXT_PUBLIC_TELLER_APP_ID": "app_psn4rd3bce7veea470000"
+    "NEXT_PUBLIC_TELLER_APP_ID": "app_psn4rd3bce7veea470000",
+    "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY": "pk_live_51T7T3PLGymlsk9YYy06J7I8OHqYkr0Fs8g2833PF6YzV571VgcmxoNEJXJpyxKLy0B9BS27Ikk1okqROMnFVH2WX00S9qiMlGZ"
   },
 
   // Service binding to the teller-proxy Worker. The Pages project's
