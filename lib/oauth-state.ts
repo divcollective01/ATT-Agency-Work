@@ -1,4 +1,5 @@
 import { encryptToken, decryptToken } from "@/lib/crypto";
+import type { PlatformSlug } from "@/lib/platform-connections";
 
 /**
  * Stateless `state` parameter for OAuth round-trips.
@@ -19,7 +20,7 @@ const STATE_TTL_MS = 10 * 60 * 1000;
 
 type StatePayload = {
   uid: string; // auth.users.id
-  platform: "stripe" | "square";
+  platform: PlatformSlug;
   ts: number;
   nonce: string;
 };
@@ -36,7 +37,7 @@ function fromUrlSafe(s: string): string {
 
 export async function signOAuthState(input: {
   authUserId: string;
-  platform: "stripe" | "square";
+  platform: PlatformSlug;
 }): Promise<string> {
   const nonce = crypto.getRandomValues(new Uint8Array(8));
   const nonceHex = Array.from(nonce)
@@ -56,7 +57,7 @@ export async function signOAuthState(input: {
 export async function verifyOAuthState(opts: {
   state: string;
   expectedAuthUserId: string;
-  expectedPlatform: "stripe" | "square";
+  expectedPlatform: PlatformSlug;
 }): Promise<void> {
   const [ivPart, ctPart] = opts.state.split(".");
   if (!ivPart || !ctPart) {

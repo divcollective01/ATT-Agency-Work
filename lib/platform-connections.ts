@@ -16,7 +16,7 @@ import {
  * the calling auth user through and let Postgres enforce the policy.
  */
 
-export type PlatformSlug = "stripe" | "square";
+export type PlatformSlug = "stripe" | "square" | "google" | "microsoft";
 
 export type ResolvedCaller = {
   /** auth.users.id from `supabase.auth.getUser()`. */
@@ -65,6 +65,8 @@ export type PlatformConnectionRow = {
   encryption_iv: string | null;
   stripe_user_id: string | null;
   square_merchant_id: string | null;
+  connected_email: string | null;
+  connected_name: string | null;
   token_expires_at: string | null;
   scope: string | null;
   key_hint: string | null;
@@ -73,9 +75,14 @@ export type PlatformConnectionRow = {
 export type DecryptedConnection = {
   platform: PlatformSlug;
   accessToken: string;
+  /** Decrypted refresh token, or null if not stored. */
   refreshToken: string | null;
   stripeUserId: string | null;
   squareMerchantId: string | null;
+  /** Email address of the connected Google / Microsoft account. */
+  connectedEmail: string | null;
+  /** Display name of the connected Google / Microsoft account. */
+  connectedName: string | null;
   tokenExpiresAt: string | null;
   scope: string | null;
 };
@@ -95,7 +102,8 @@ export async function loadDecryptedConnection(opts: {
     .from("platform_connections")
     .select(
       "platform,status,encrypted_access_token,encrypted_refresh_token," +
-        "encryption_iv,stripe_user_id,square_merchant_id,token_expires_at,scope,key_hint"
+        "encryption_iv,stripe_user_id,square_merchant_id,connected_email," +
+        "connected_name,token_expires_at,scope,key_hint"
     )
     .eq("user_id", opts.internalUserId)
     .eq("platform", opts.platform)
@@ -108,7 +116,7 @@ export async function loadDecryptedConnection(opts: {
   }
   if (!data) {
     throw new Error(
-      `No ${opts.platform} connection on file for this user — connect from the Surcharge Hub first.`
+      `No ${opts.platform} connection on file for this user — connect from the app first.`
     );
   }
   if (data.status !== "connected") {
@@ -126,13 +134,13 @@ export async function loadDecryptedConnection(opts: {
     ciphertext: data.encrypted_access_token,
     iv: data.encryption_iv,
   });
-  let refreshToken: string | null = null;
-  if (data.encrypted_refresh_token) {
-    refreshToken = await decryptToken({
-      ciphertext: data.encrypted_refresh_token,
-      iv: data.encryption_iv,
-    });
-  }
+
+  // Refresh tokens are stored in the bundled "iv:ciphertext" format written
+  // by upsertEncryptedConnection — use decryptStoredRefreshToken, NOT the
+  // access-token IV (which would be the wrong nonce and cause decryption to fail).
+  const refreshToken = await decryptStoredRefreshToken(
+    data.encrypted_refresh_token
+  );
 
   return {
     platform: data.platform,
@@ -140,6 +148,8 @@ export async function loadDecryptedConnection(opts: {
     refreshToken,
     stripeUserId: data.stripe_user_id,
     squareMerchantId: data.square_merchant_id,
+    connectedEmail: data.connected_email,
+    connectedName: data.connected_name,
     tokenExpiresAt: data.token_expires_at,
     scope: data.scope,
   };
@@ -152,6 +162,10 @@ export type UpsertConnectionInput = {
   refreshToken?: string | null;
   stripeUserId?: string | null;
   squareMerchantId?: string | null;
+  /** Email address for Google / Microsoft connections. */
+  connectedEmail?: string | null;
+  /** Display name for Google / Microsoft connections. */
+  connectedName?: string | null;
   tokenExpiresAt?: string | null;
   scope?: string | null;
 };
@@ -195,6 +209,8 @@ export async function upsertEncryptedConnection(
         encryption_iv: accessEnc.iv,
         stripe_user_id: input.stripeUserId ?? null,
         square_merchant_id: input.squareMerchantId ?? null,
+        connected_email: input.connectedEmail ?? null,
+        connected_name: input.connectedName ?? null,
         token_expires_at: input.tokenExpiresAt ?? null,
         scope: input.scope ?? null,
         key_hint: tokenHint(input.accessToken),
@@ -229,4 +245,18 @@ export async function decryptStoredRefreshToken(
   const iv = bundled.slice(0, idx);
   const ciphertext = bundled.slice(idx + 1);
   return decryptToken({ ciphertext, iv } as EncryptedPayload);
+}
+
+/**
+ * Returns true when the stored access token is expired or will expire within
+ * the given buffer (default 5 minutes). A missing expiry is treated as
+ * "needs refresh" so callers refresh defensively rather than getting a 401
+ * mid-request.
+ */
+export function tokenNeedsRefresh(
+  tokenExpiresAt: string | null,
+  bufferMs = 5 * 60 * 1000
+): boolean {
+  if (!tokenExpiresAt) return true;
+  return Date.now() + bufferMs >= new Date(tokenExpiresAt).getTime();
 }

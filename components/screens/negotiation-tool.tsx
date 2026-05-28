@@ -7,14 +7,12 @@
  * benchmarks, and lets the user enter the actual quoted vendor price increase
  * directly into the row. Overage vs. FRED is computed live.
  *
- * Required env vars (for live FRED data):
- *   FRED_API_KEY  — St. Louis Fed API key
- *
- * Email-send integrations (implement when keys are available):
- *   SENDGRID_API_KEY     — or RESEND_API_KEY for transactional email
+ * Emails are sent via the user's connected Gmail or Outlook account — no
+ * platform domain required. Connect / disconnect buttons live at the top of
+ * this screen. Token refresh is handled transparently by /api/email/send.
  */
 
-import { useState, useEffect, useMemo, useRef, useId, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useId } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -31,7 +29,7 @@ import {
   Plus,
   X,
   ExternalLink,
-  Pencil,
+  Link2Off,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +42,13 @@ import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 
 type NegotiationStatus = "flagged" | "in-progress" | "resolved";
 type FilterStatus = "all" | NegotiationStatus;
+
+/** Shared with app/negotiate/page.tsx (server component). */
+export type EmailConnectionStatus = {
+  platform: "google" | "microsoft" | null;
+  email: string | null;
+  name: string | null;
+};
 
 export interface InitialMaterial {
   id: string;
@@ -93,7 +98,11 @@ function generateEmailSubject(v: VendorEntry): string {
   return `Price Increase Discussion — ${v.material}`;
 }
 
-function generateEmailBody(v: VendorEntry, businessName: string): string {
+function generateEmailBody(
+  v: VendorEntry,
+  businessName: string,
+  senderName?: string | null
+): string {
   const c = computeEntry(v);
   const companyName = businessName;
   const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
@@ -122,7 +131,7 @@ However, a ${formatPercent(c.vendorChangePct, 1)} increase is ${formatPercent(c.
 We value this supply relationship and want to find a mutually workable arrangement. Could we schedule a brief call this week to discuss?
 
 Best regards,
-[Your Name]
+${senderName ?? "[Your Name]"}
 ${companyName}
 
 ---
@@ -130,8 +139,12 @@ Data source: St. Louis Federal Reserve FRED — ${v.fredLabel} (${v.fredCode})
 Retrieved: ${today}`;
 }
 
-function generateEmailDraft(v: VendorEntry, businessName: string): string {
-  return `Subject: ${generateEmailSubject(v)}\n\n${generateEmailBody(v, businessName)}`;
+function generateEmailDraft(
+  v: VendorEntry,
+  businessName: string,
+  senderName?: string | null
+): string {
+  return `Subject: ${generateEmailSubject(v)}\n\n${generateEmailBody(v, businessName, senderName)}`;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -307,6 +320,7 @@ function MathBreakdown({
 function VendorCard({
   vendor,
   businessName,
+  emailConnection,
   onStatusChange,
   onVendorNameChange,
   onQuotedCostChange,
@@ -315,6 +329,7 @@ function VendorCard({
 }: {
   vendor: VendorEntry;
   businessName: string;
+  emailConnection: EmailConnectionStatus;
   onStatusChange: (id: string, status: NegotiationStatus) => void;
   onVendorNameChange: (id: string, value: string) => void;
   onQuotedCostChange: (id: string, value: number) => void;
@@ -331,13 +346,23 @@ function VendorCard({
   const StatusIcon = cfg.icon;
   const isOverage = c.overagePct > 0;
   const hasQuote = vendor.quotedUnitCost > 0;
-  const canSend = hasQuote && vendor.contactEmail.trim().length > 0;
+  const emailConnected = emailConnection.platform !== null;
+  const canSend = hasQuote && vendor.contactEmail.trim().length > 0 && emailConnected;
+  const senderName = emailConnection.name;
+  const providerLabel =
+    emailConnection.platform === "google"
+      ? "Gmail"
+      : emailConnection.platform === "microsoft"
+      ? "Outlook"
+      : "Email";
 
   function copyEmail() {
-    navigator.clipboard.writeText(generateEmailDraft(vendor, businessName)).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    });
+    navigator.clipboard
+      .writeText(generateEmailDraft(vendor, businessName, senderName))
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2500);
+      });
   }
 
   async function sendEmail() {
@@ -351,18 +376,37 @@ function VendorCard({
         body: JSON.stringify({
           to: vendor.contactEmail.trim(),
           subject: generateEmailSubject(vendor),
-          body: generateEmailBody(vendor, businessName),
+          body: generateEmailBody(vendor, businessName, senderName),
         }),
       });
-      const data = await res.json();
+      const data: {
+        sent?: boolean;
+        error?: string;
+        needsReconnect?: boolean;
+        needsConnect?: boolean;
+        from?: string;
+        provider?: string;
+      } = await res.json();
+
       if (data.sent) {
-        setSendStatus({ ok: true, message: `Sent to ${vendor.contactEmail} · id ${data.id ?? "(no id)"}` });
+        setSendStatus({
+          ok: true,
+          message: `Sent to ${vendor.contactEmail} via ${providerLabel}`,
+        });
         onStatusChange(vendor.id, "in-progress");
+      } else if (data.needsReconnect) {
+        setSendStatus({
+          ok: false,
+          message: `${data.error ?? "Token expired"} — reconnect from the top of this page.`,
+        });
       } else {
         setSendStatus({ ok: false, message: data.error ?? "Send failed" });
       }
-    } catch (err: any) {
-      setSendStatus({ ok: false, message: err?.message ?? "Network error sending email" });
+    } catch (err: unknown) {
+      setSendStatus({
+        ok: false,
+        message: err instanceof Error ? err.message : "Network error sending email",
+      });
     } finally {
       setSending(false);
     }
@@ -513,19 +557,27 @@ function VendorCard({
                     size="sm"
                     onClick={sendEmail}
                     disabled={!canSend || sending}
-                    title={!canSend ? "Add a contact email above to enable sending" : undefined}
+                    title={
+                      !emailConnected
+                        ? "Connect Gmail or Outlook at the top of this page to send"
+                        : !hasQuote
+                        ? "Enter a quoted unit cost first"
+                        : !vendor.contactEmail.trim()
+                        ? "Add a contact email above to send"
+                        : undefined
+                    }
                   >
                     {sending ? (
                       <Loader2 className="size-3.5 animate-spin" />
                     ) : (
                       <Send className="size-3.5" />
                     )}
-                    {sending ? "Sending…" : "Send via Resend"}
+                    {sending ? "Sending…" : `Send via ${providerLabel}`}
                   </Button>
                 </div>
               </div>
               <pre className="rounded-2xl border border-cocoa-700 bg-cocoa-950 px-5 py-4 text-xs text-cream-dim font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto max-h-[400px] overflow-y-auto">
-                {generateEmailDraft(vendor, businessName)}
+                {generateEmailDraft(vendor, businessName, senderName)}
               </pre>
               {sendStatus && (
                 <div
@@ -546,7 +598,9 @@ function VendorCard({
               )}
               <p className="text-xs text-cream-mute mt-2 flex items-center gap-1.5">
                 <Info className="size-3.5" />
-                Sent from <span className="font-mono text-vibrant-soft">noreply@attagency.co</span> · vendor replies go to your account email.
+                {emailConnection.email
+                  ? `Sent from ${emailConnection.email} via ${providerLabel}.`
+                  : "Connect Gmail or Outlook above to enable sending."}
               </p>
             </div>
           )}
@@ -842,14 +896,75 @@ export function NegotiationToolScreen({
   initialMaterials,
   businessName,
   userEmail,
+  emailConnection,
 }: {
   initialMaterials: InitialMaterial[];
   businessName: string;
   userEmail: string;
+  emailConnection: EmailConnectionStatus;
 }) {
   const [vendors, setVendors] = useState<VendorEntry[]>([]);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [sortBy, setSortBy] = useState<"overage" | "date">("overage");
+
+  // Local email connection state — starts from server prop, updates on disconnect
+  const [emailConn, setEmailConn] =
+    useState<EmailConnectionStatus>(emailConnection);
+
+  // Disconnect state
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  // OAuth return URL handling — detect ?email_connected / ?email_error params
+  const [oauthBanner, setOauthBanner] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("email_connected");
+    const error = params.get("email_error");
+    if (connected) {
+      setOauthBanner({
+        ok: true,
+        message: `${connected === "google" ? "Gmail" : "Outlook"} connected successfully.`,
+      });
+    } else if (error) {
+      setOauthBanner({ ok: false, message: decodeURIComponent(error) });
+    }
+    if (connected || error) {
+      // Clean the URL without reloading
+      const clean = window.location.pathname;
+      window.history.replaceState({}, "", clean);
+    }
+  }, []);
+
+  async function handleDisconnect(platform: "google" | "microsoft") {
+    setDisconnecting(true);
+    try {
+      const res = await fetch(`/api/auth/${platform}/disconnect`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        setEmailConn({ platform: null, email: null, name: null });
+        setOauthBanner({
+          ok: true,
+          message: `${platform === "google" ? "Gmail" : "Outlook"} disconnected.`,
+        });
+      } else {
+        const d = await res.json();
+        setOauthBanner({
+          ok: false,
+          message: d.error ?? "Disconnect failed",
+        });
+      }
+    } catch {
+      setOauthBanner({ ok: false, message: "Network error during disconnect" });
+    } finally {
+      setDisconnecting(false);
+    }
+  }
 
   // Hydrate vendors from server-supplied materials as un-negotiated rows.
   useEffect(() => {
@@ -1023,20 +1138,107 @@ export function NegotiationToolScreen({
         }
       />
 
-      {/* Email sender info */}
-      <div className="rounded-2xl border border-cocoa-700 bg-cocoa-900/70 px-5 py-4 flex items-center gap-3 flex-wrap">
-        <Mail className="size-4 text-vibrant shrink-0" />
-        <p className="text-sm text-cream-dim">
-          Negotiation emails send from{" "}
-          <span className="font-mono text-vibrant-soft">noreply@attagency.co</span>
-          {userEmail && (
-            <>
-              {" "}with replies routed to{" "}
-              <span className="font-mono text-cream">{userEmail}</span>
-            </>
+      {/* OAuth banner */}
+      {oauthBanner && (
+        <div
+          className={cn(
+            "rounded-2xl border px-4 py-3 flex items-start gap-2 text-sm",
+            oauthBanner.ok
+              ? "border-electric/40 bg-electric/10 text-electric-soft"
+              : "border-hotpink/40 bg-hotpink/10 text-hotpink-soft"
           )}
-          {" "}— signed as <span className="text-cream">{businessName}</span>.
-        </p>
+        >
+          {oauthBanner.ok ? (
+            <CheckCircle2 className="size-4 shrink-0 mt-0.5" />
+          ) : (
+            <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+          )}
+          <span>{oauthBanner.message}</span>
+          <button
+            onClick={() => setOauthBanner(null)}
+            className="ml-auto text-cream-mute hover:text-cream shrink-0"
+            aria-label="Dismiss"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Email provider connection */}
+      <div className="rounded-2xl border border-cocoa-700 bg-cocoa-900/70 px-5 py-4">
+        {emailConn.platform ? (
+          // ── Connected state ──────────────────────────────────────────────
+          <div className="flex items-center gap-3 flex-wrap">
+            <div
+              className={cn(
+                "size-8 rounded-xl flex items-center justify-center shrink-0",
+                emailConn.platform === "google"
+                  ? "bg-white/10"
+                  : "bg-blue-900/30"
+              )}
+            >
+              <Mail className="size-4 text-vibrant" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-cream-mute">
+                {emailConn.platform === "google" ? "Gmail" : "Outlook"} connected
+              </p>
+              <p className="text-sm text-cream truncate">
+                {emailConn.email}
+                {emailConn.name && (
+                  <span className="text-cream-mute ml-2">· {emailConn.name}</span>
+                )}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleDisconnect(emailConn.platform!)}
+              disabled={disconnecting}
+              className="text-cream-mute shrink-0"
+            >
+              {disconnecting ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Link2Off className="size-3.5" />
+              )}
+              Disconnect
+            </Button>
+          </div>
+        ) : (
+          // ── Not connected state ──────────────────────────────────────────
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex-1 min-w-[200px]">
+              <p className="text-sm font-medium text-cream">Connect your email</p>
+              <p className="text-xs text-cream-mute mt-0.5">
+                Negotiation emails send directly from your inbox. Vendors see
+                your real address and replies land in your inbox.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  window.location.href = "/api/auth/google/connect";
+                }}
+              >
+                <Mail className="size-3.5" />
+                Connect Gmail
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  window.location.href = "/api/auth/microsoft/connect";
+                }}
+              >
+                <Mail className="size-3.5" />
+                Connect Outlook
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* KPIs */}
@@ -1135,6 +1337,7 @@ export function NegotiationToolScreen({
               key={vendor.id}
               vendor={vendor}
               businessName={businessName}
+              emailConnection={emailConn}
               onStatusChange={updateStatus}
               onVendorNameChange={updateVendorName}
               onQuotedCostChange={updateQuotedCost}
