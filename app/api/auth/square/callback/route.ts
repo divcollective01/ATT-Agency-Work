@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import { verifyOAuthState } from "@/lib/oauth-state";
-import {
-  resolveCaller,
-  upsertEncryptedConnection,
-} from "@/lib/platform-connections";
+import { upsertEncryptedConnection } from "@/lib/platform-connections";
+import { decryptToken } from "@/lib/crypto";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -12,9 +10,9 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/auth/square/callback?code=...&state=...
  *
- * Mirrors the Stripe callback but talks to Square's token endpoint, which
- * has its own request shape: JSON body + the platform's
- * SQUARE_APPLICATION_SECRET in the body (NOT in an Authorization header).
+ * Uses service-role Supabase client because session cookies are not reliably
+ * available after an external OAuth redirect on Cloudflare Pages edge runtime.
+ * The AES-GCM encrypted state parameter is the authentication mechanism.
  *
  * Square access tokens currently expire after 30 days and must be refreshed
  * with the refresh_token; we persist `expires_at` so a future cron can
@@ -40,7 +38,6 @@ function squareBase(): string {
 function appBase(req: Request): string {
   return (
     process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.APP_URL ??
     new URL(req.url).origin
   ).replace(/\/$/, "");
 }
@@ -51,39 +48,40 @@ function redirectWithError(req: Request, message: string): NextResponse {
   return NextResponse.redirect(target.toString(), { status: 302 });
 }
 
+function fromUrlSafe(s: string): string {
+  let b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (b64.length % 4) b64 += "=";
+  return b64;
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  const denyError = url.searchParams.get("error_description") ?? url.searchParams.get("error");
+  const denyError =
+    url.searchParams.get("error_description") ?? url.searchParams.get("error");
 
-  if (denyError) {
-    return redirectWithError(req, denyError);
-  }
+  if (denyError) return redirectWithError(req, denyError);
   if (!code || !state) {
     return redirectWithError(req, "Square redirect was missing `code` or `state`.");
   }
 
-  const supabase = createSupabaseServerClient();
-  let caller: Awaited<ReturnType<typeof resolveCaller>>;
+  // ── Extract authUserId from encrypted state ───────────────────────────────
+  let authUserId: string;
   try {
-    caller = await resolveCaller(supabase);
-  } catch (err) {
-    return redirectWithError(
-      req,
-      err instanceof Error ? err.message : "Failed to resolve caller."
-    );
-  }
-  if (!caller) {
-    return redirectWithError(req, "Sign in before completing Square connect.");
-  }
-
-  try {
+    const [ivPart, ctPart] = state.split(".");
+    if (!ivPart || !ctPart) throw new Error("Malformed state token");
+    const json = await decryptToken({
+      iv: fromUrlSafe(ivPart),
+      ciphertext: fromUrlSafe(ctPart),
+    });
+    const payload = JSON.parse(json) as { uid: string; platform: string; ts: number };
     await verifyOAuthState({
       state,
-      expectedAuthUserId: caller.authUserId,
+      expectedAuthUserId: payload.uid,
       expectedPlatform: "square",
     });
+    authUserId = payload.uid;
   } catch (err) {
     return redirectWithError(
       req,
@@ -91,6 +89,19 @@ export async function GET(req: Request) {
     );
   }
 
+  // ── Resolve internal user ID via service role ─────────────────────────────
+  const serviceDb = createSupabaseServiceClient();
+  const { data: userRow } = await serviceDb
+    .from("users")
+    .select("id")
+    .eq("auth_user_id", authUserId)
+    .maybeSingle();
+
+  if (!userRow?.id) {
+    return redirectWithError(req, "User account not found — please sign in first.");
+  }
+
+  // ── Square token exchange ──────────────────────────────────────────────────
   const clientId = process.env.SQUARE_APPLICATION_ID;
   const clientSecret = process.env.SQUARE_APPLICATION_SECRET;
   if (!clientId || !clientSecret) {
@@ -135,9 +146,10 @@ export async function GET(req: Request) {
     );
   }
 
+  // ── Persist encrypted credentials ─────────────────────────────────────────
   try {
-    await upsertEncryptedConnection(supabase, {
-      internalUserId: caller.internalUserId,
+    await upsertEncryptedConnection(serviceDb as any, {
+      internalUserId: userRow.id,
       platform: "square",
       accessToken: tokens.access_token!,
       refreshToken: tokens.refresh_token ?? null,

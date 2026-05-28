@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import { verifyOAuthState } from "@/lib/oauth-state";
-import {
-  resolveCaller,
-  upsertEncryptedConnection,
-} from "@/lib/platform-connections";
+import { upsertEncryptedConnection } from "@/lib/platform-connections";
+import { decryptToken } from "@/lib/crypto";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -12,18 +10,9 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/auth/stripe/callback?code=...&state=...
  *
- * Stripe redirects here after the merchant approves the OAuth scope. We:
- *   1. Verify the encrypted `state` matches the still-logged-in caller.
- *   2. POST the auth code to https://connect.stripe.com/oauth/token with the
- *      platform's STRIPE_SECRET_KEY (NOT the SDK — this is the only call
- *      that uses the raw platform key, and it doesn't need the SDK at all).
- *   3. Encrypt the returned access + refresh tokens and persist them on
- *      public.platform_connections (RLS gates the upsert to the caller).
- *   4. Redirect back to /surcharge so the UI re-reads the connection state.
- *
- * Failure modes are surfaced via `?stripe_error=...` query strings on the
- * redirect target rather than a JSON error — the user is in their browser
- * here, not in our app's `fetch` layer.
+ * Uses service-role Supabase client because session cookies are not reliably
+ * available after an external OAuth redirect on Cloudflare Pages edge runtime.
+ * The AES-GCM encrypted state parameter is the authentication mechanism.
  */
 
 type StripeTokenResponse = {
@@ -41,7 +30,6 @@ type StripeTokenResponse = {
 function appBase(req: Request): string {
   return (
     process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.APP_URL ??
     new URL(req.url).origin
   ).replace(/\/$/, "");
 }
@@ -52,39 +40,40 @@ function redirectWithError(req: Request, message: string): NextResponse {
   return NextResponse.redirect(target.toString(), { status: 302 });
 }
 
+function fromUrlSafe(s: string): string {
+  let b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (b64.length % 4) b64 += "=";
+  return b64;
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  const oauthError = url.searchParams.get("error_description") ?? url.searchParams.get("error");
+  const oauthError =
+    url.searchParams.get("error_description") ?? url.searchParams.get("error");
 
-  if (oauthError) {
-    return redirectWithError(req, oauthError);
-  }
+  if (oauthError) return redirectWithError(req, oauthError);
   if (!code || !state) {
     return redirectWithError(req, "Stripe redirect was missing `code` or `state`.");
   }
 
-  const supabase = createSupabaseServerClient();
-  let caller: Awaited<ReturnType<typeof resolveCaller>>;
+  // ── Extract authUserId from encrypted state ───────────────────────────────
+  let authUserId: string;
   try {
-    caller = await resolveCaller(supabase);
-  } catch (err) {
-    return redirectWithError(
-      req,
-      err instanceof Error ? err.message : "Failed to resolve caller."
-    );
-  }
-  if (!caller) {
-    return redirectWithError(req, "Sign in before completing Stripe connect.");
-  }
-
-  try {
+    const [ivPart, ctPart] = state.split(".");
+    if (!ivPart || !ctPart) throw new Error("Malformed state token");
+    const json = await decryptToken({
+      iv: fromUrlSafe(ivPart),
+      ciphertext: fromUrlSafe(ctPart),
+    });
+    const payload = JSON.parse(json) as { uid: string; platform: string; ts: number };
     await verifyOAuthState({
       state,
-      expectedAuthUserId: caller.authUserId,
+      expectedAuthUserId: payload.uid,
       expectedPlatform: "stripe",
     });
+    authUserId = payload.uid;
   } catch (err) {
     return redirectWithError(
       req,
@@ -92,14 +81,24 @@ export async function GET(req: Request) {
     );
   }
 
+  // ── Resolve internal user ID via service role ─────────────────────────────
+  const serviceDb = createSupabaseServiceClient();
+  const { data: userRow } = await serviceDb
+    .from("users")
+    .select("id")
+    .eq("auth_user_id", authUserId)
+    .maybeSingle();
+
+  if (!userRow?.id) {
+    return redirectWithError(req, "User account not found — please sign in first.");
+  }
+
+  // ── Stripe token exchange ─────────────────────────────────────────────────
   const platformKey = process.env.STRIPE_SECRET_KEY;
   if (!platformKey) {
     return redirectWithError(req, "STRIPE_SECRET_KEY not configured on platform.");
   }
 
-  // Token exchange. We hit the raw endpoint instead of using the SDK because
-  // the SDK's `oauth.token` helper expects a slightly different call shape
-  // and the raw POST is one fewer dependency on the edge.
   let tokens: StripeTokenResponse;
   try {
     const tokenRes = await fetch("https://connect.stripe.com/oauth/token", {
@@ -115,11 +114,10 @@ export async function GET(req: Request) {
     });
     tokens = (await tokenRes.json()) as StripeTokenResponse;
     if (!tokenRes.ok || tokens.error || !tokens.access_token || !tokens.stripe_user_id) {
-      const msg =
-        tokens.error_description ??
-        tokens.error ??
-        `Stripe token exchange failed with status ${tokenRes.status}`;
-      return redirectWithError(req, msg);
+      return redirectWithError(
+        req,
+        tokens.error_description ?? tokens.error ?? `Stripe token exchange failed (${tokenRes.status})`
+      );
     }
   } catch (err) {
     return redirectWithError(
@@ -128,9 +126,10 @@ export async function GET(req: Request) {
     );
   }
 
+  // ── Persist encrypted credentials ─────────────────────────────────────────
   try {
-    await upsertEncryptedConnection(supabase, {
-      internalUserId: caller.internalUserId,
+    await upsertEncryptedConnection(serviceDb as any, {
+      internalUserId: userRow.id,
       platform: "stripe",
       accessToken: tokens.access_token!,
       refreshToken: tokens.refresh_token ?? null,
