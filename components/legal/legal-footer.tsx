@@ -6,7 +6,7 @@ type ModalKey = "terms" | "privacy" | null;
 
 const TERMS_BODY = `Last updated May 11, 2026. These terms govern your use of Profit Shield and the relationship between you and ATT Agency. They are written in plain English on purpose. For any questions, contact us at contact@attagency.co.
 
-1. Who we are: ATT Agency is a creative studio operating as a registered limited liability company (LLC). Founded by Saras Totey, Ryder Thomson, and Sunny Avula. "ATT," "we," "our," and "us" refer to ATT Agency.
+1. Who we are: ATT Agency is a creative studio operating as a registered limited liability company (LLC). Founded by Saras Totey, Ryder Thompson, and Sunny Avula. "ATT," "we," "our," and "us" refer to ATT Agency.
 
 2. Using this site: You may browse and execute pricing calculations for lawful corporate purposes. You may not target unauthorized server requests, harvest system content at scale, or deploy malicious scripts to disrupt performance. Access can be restricted at any time.
 
@@ -56,7 +56,7 @@ export function LegalFooter() {
       <footer className="mt-auto border-t border-[#27272A] bg-[#09090B]">
         <div className="mx-auto flex max-w-screen-2xl flex-col gap-3 px-6 py-6 text-sm text-[#A1A1AA] md:flex-row md:items-center md:justify-between md:px-10 lg:px-14">
           <p className="leading-relaxed">
-            An ATT AGENCY product developed by Saras Totey, Ryder Thomson, and Sunny Avula.
+            An ATT AGENCY product developed by Saras Totey, Ryder Thompson, and Sunny Avula.
           </p>
           <nav className="flex items-center gap-5">
             <button
