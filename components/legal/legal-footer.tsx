@@ -56,7 +56,7 @@ export function LegalFooter() {
       <footer className="mt-auto border-t border-[#27272A] bg-[#09090B]">
         <div className="mx-auto flex max-w-screen-2xl flex-col gap-3 px-6 py-6 text-sm text-[#A1A1AA] md:flex-row md:items-center md:justify-between md:px-10 lg:px-14">
           <p className="leading-relaxed">
-            An ATT AGENCY product and developed by Saras Totey, Ryder Thomson, and Sunny Avula.
+            An ATT AGENCY product and developed by Saras Totey, Ryder Thomson, Sunny Avula.
           </p>
           <nav className="flex items-center gap-5">
             <button
