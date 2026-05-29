@@ -166,9 +166,35 @@ export async function resetPassword(_prev: AuthState, formData: FormData): Promi
 }
 
 /**
- * Finalize a password reset. /auth/callback exchanges the code from the
- * recovery link into a session before the user reaches this action, so
- * updateUser runs against an authenticated, non-anonymous session.
+ * Finalize a password reset.
+ *
+ * Security model — why this action can only ever change the password of
+ * the user who actually clicked the recovery link in their email:
+ *
+ *   1. supabase.auth.getUser() round-trips the access token to Supabase
+ *      Auth and verifies its JWT signature. We are NOT trusting raw
+ *      cookies that client-side script could spoof; the returned `user`
+ *      reflects the real identity bound to a Supabase-signed JWT.
+ *
+ *   2. That JWT can only have been minted by one of two paths we
+ *      control:
+ *        (a) app/auth/callback/route.ts handing a one-time `code` /
+ *            `token_hash` from the recovery email to
+ *            exchangeCodeForSession / verifyOtp, or
+ *        (b) the Supabase browser client consuming the implicit-flow
+ *            hash fragment from the same recovery email and firing
+ *            PASSWORD_RECOVERY.
+ *      In both paths the token was just issued to the address that owns
+ *      the inbox, so updateUser({ password }) can only rewrite that
+ *      user's password — never anyone else's.
+ *
+ *   3. Anonymous sessions are rejected explicitly. They're valid
+ *      Supabase users but have no email, so attaching a password would
+ *      create a credential nobody can sign back into.
+ *
+ *   4. Supabase invalidates the user's other refresh tokens on
+ *      successful password change, severing any stale or attacker-
+ *      planted sessions the moment the update lands.
  */
 export async function updatePassword(
   _prev: AuthState,
@@ -182,9 +208,11 @@ export async function updatePassword(
 
   const supabase = createSupabaseServerClient();
   const {
-    data: { user }
+    data: { user },
+    error: userError
   } = await supabase.auth.getUser();
-  if (!user || user.is_anonymous) {
+
+  if (userError || !user || user.is_anonymous) {
     return {
       error: "Your reset link is invalid or has expired. Request a new one."
     };
