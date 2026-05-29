@@ -181,16 +181,26 @@ drop trigger if exists yield_entries_touch on public.yield_entries;
 create trigger yield_entries_touch before update on public.yield_entries
   for each row execute function public.touch_updated_at();
 
--- Audit trail for all yield_entry changes
+-- Audit trail for all yield_entry changes.
+-- entry_id is intentionally a bare uuid (no FK) — the AFTER DELETE trigger below
+-- inserts an audit row referencing the just-deleted yield_entries.id, which a
+-- FK with `on delete cascade` would reject (and a non-cascade FK would still
+-- reject at insert time). Audit rows must outlive their parents anyway.
 create table if not exists public.yield_entry_audit (
   id uuid primary key default gen_random_uuid(),
-  entry_id uuid not null references public.yield_entries(id) on delete cascade,
+  entry_id uuid not null,
   user_id uuid not null references public.users(id) on delete cascade,
   action text not null check (action in ('insert', 'update', 'delete')),
   old_data jsonb,
   new_data jsonb,
   changed_at timestamptz not null default now()
 );
+
+-- Forward-fix for installs that already ran the prior schema where entry_id
+-- carried a FK to yield_entries(id) — the AFTER DELETE trigger below would
+-- violate it on every DELETE. Idempotent on fresh installs.
+alter table public.yield_entry_audit
+  drop constraint if exists yield_entry_audit_entry_id_fkey;
 
 create index if not exists yield_entry_audit_entry_idx
   on public.yield_entry_audit (entry_id, changed_at desc);
