@@ -14,16 +14,33 @@ import {
   fetchFredSeries,
   yoyDelta,
   FRED_SERIES,
-  COMMODITY_CATALOG
+  COMMODITY_CATALOG,
+  FredError,
+  type FredFailureReason,
 } from "@/lib/fred";
 
 export const revalidate = 21600;
+
+function fredCopyFor(reason: FredFailureReason): string {
+  switch (reason) {
+    case "no_key":
+      return "FRED_API_KEY is missing on the server. Set it in Cloudflare Pages → Environment Variables.";
+    case "key_rejected":
+      return "The FRED API key was rejected. Generate a new one at research.stlouisfed.org/useraccount/apikey.";
+    case "upstream_down":
+    case "timeout":
+      return "Live macro data is temporarily unavailable — the St. Louis Fed's FRED service is returning errors. Charts will return automatically when the feed is restored.";
+    default:
+      return "Live macro data is temporarily unavailable. The feed will return automatically once the connection recovers.";
+  }
+}
 
 async function loadMacro(): Promise<{
   chart: InflationSeries[];
   cpiDelta: number | null;
   ppiDelta: number | null;
   available: boolean;
+  failureReason: FredFailureReason | null;
 }> {
   try {
     // Fetch 36 months so we can compute 24 months of YoY % change
@@ -66,30 +83,51 @@ async function loadMacro(): Promise<{
       chart,
       cpiDelta: yoyDelta(cpi.observations)?.deltaPct ?? null,
       ppiDelta: yoyDelta(ppi.observations)?.deltaPct ?? null,
-      available: true
+      available: true,
+      failureReason: null,
     };
-  } catch {
-    return { chart: [], cpiDelta: null, ppiDelta: null, available: false };
+  } catch (err) {
+    const reason: FredFailureReason =
+      err instanceof FredError ? err.reason : "other";
+    return {
+      chart: [],
+      cpiDelta: null,
+      ppiDelta: null,
+      available: false,
+      failureReason: reason,
+    };
   }
 }
 
-async function loadCommodityYoy(): Promise<CommodityYoY[]> {
-  const results = await Promise.all(
+async function loadCommodityYoy(): Promise<{
+  rows: CommodityYoY[];
+  failureReason: FredFailureReason | null;
+}> {
+  let observedFailure: FredFailureReason | null = null;
+  const rows = await Promise.all(
     COMMODITY_CATALOG.map(async (c) => {
       try {
         const series = await fetchFredSeries(c.code, { limit: 18 });
         const delta = yoyDelta(series.observations);
         return { label: c.label, code: c.code, yoyPct: delta?.deltaPct ?? null };
-      } catch {
+      } catch (err) {
+        if (err instanceof FredError && !observedFailure) {
+          observedFailure = err.reason;
+        }
         return { label: c.label, code: c.code, yoyPct: null };
       }
     })
   );
-  return results.sort((a, b) => (b.yoyPct ?? -Infinity) - (a.yoyPct ?? -Infinity));
+  rows.sort((a, b) => (b.yoyPct ?? -Infinity) - (a.yoyPct ?? -Infinity));
+  return { rows, failureReason: observedFailure };
 }
 
 export default async function InflationPage() {
-  const [macro, commodities] = await Promise.all([loadMacro(), loadCommodityYoy()]);
+  const [macro, commodityResult] = await Promise.all([
+    loadMacro(),
+    loadCommodityYoy(),
+  ]);
+  const commodities = commodityResult.rows;
 
   return (
     <div className="space-y-10">
@@ -154,8 +192,8 @@ export default async function InflationPage() {
           {macro.available && macro.chart.length > 0 ? (
             <InflationChart data={macro.chart} />
           ) : (
-            <p className="text-sm text-cream-mute py-12 text-center">
-              Could not reach the FRED API. Check FRED_API_KEY in .env.local.
+            <p className="text-sm text-cream-mute py-12 text-center px-6 max-w-xl mx-auto leading-relaxed">
+              {fredCopyFor(macro.failureReason ?? "other")}
             </p>
           )}
         </CardContent>
@@ -177,8 +215,8 @@ export default async function InflationPage() {
           {commodities.some((c) => c.yoyPct !== null) ? (
             <CommodityYoyChart data={commodities} />
           ) : (
-            <p className="text-sm text-cream-mute py-12 text-center">
-              No commodity data available. Verify FRED_API_KEY connectivity.
+            <p className="text-sm text-cream-mute py-12 text-center px-6 max-w-xl mx-auto leading-relaxed">
+              {fredCopyFor(commodityResult.failureReason ?? "other")}
             </p>
           )}
 

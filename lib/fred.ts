@@ -1,4 +1,7 @@
 const FRED_BASE = "https://api.stlouisfed.org/fred";
+const FETCH_TIMEOUT_MS = 12_000;
+const MAX_ATTEMPTS = 2;
+const BACKOFF_BASE_MS = 400;
 
 export type FredObservation = {
   date: string;
@@ -44,12 +47,34 @@ export const COMMODITY_CATALOG: Array<{
   { code: FRED_SERIES.PPI_PAPER, label: "Paper & Packaging", blurb: "Cardboard, kraft liner, corrugated containers" }
 ];
 
+/**
+ * Typed failure surface so callers can distinguish "user needs to fix their
+ * key" from "the St. Louis Fed is having a bad day" without string-matching.
+ */
+export type FredFailureReason =
+  | "no_key"        // FRED_API_KEY env var not set
+  | "key_rejected"  // FRED returned 400/401/403 — key is invalid or revoked
+  | "upstream_down" // 5xx from api.stlouisfed.org
+  | "timeout"       // request exceeded FETCH_TIMEOUT_MS
+  | "other";
+
+export class FredError extends Error {
+  reason: FredFailureReason;
+  status: number | null;
+  constructor(reason: FredFailureReason, message: string, status: number | null = null) {
+    super(message);
+    this.name = "FredError";
+    this.reason = reason;
+    this.status = status;
+  }
+}
+
 export async function fetchFredSeries(
   seriesId: string,
   opts: { limit?: number; observationStart?: string } = {}
 ): Promise<FredSeriesResponse> {
-  const key = process.env.FRED_API_KEY || (typeof process !== 'undefined' ? process.env.FRED_API_KEY : undefined);
-  if (!key) throw new Error("FRED_API_KEY missing");
+  const key = process.env.FRED_API_KEY;
+  if (!key) throw new FredError("no_key", "FRED_API_KEY is not set on the server.");
 
   const url = new URL(`${FRED_BASE}/series/observations`);
   url.searchParams.set("series_id", seriesId);
@@ -59,16 +84,68 @@ export async function fetchFredSeries(
   if (opts.limit) url.searchParams.set("limit", String(opts.limit));
   if (opts.observationStart) url.searchParams.set("observation_start", opts.observationStart);
 
-  const res = await fetch(url.toString(), { next: { revalidate: 60 * 60 * 6 } });
-  if (!res.ok) throw new Error(`FRED error ${res.status}`);
+  let lastError: FredError | null = null;
 
-  const raw = (await res.json()) as { observations: Array<{ date: string; value: string }> };
-  const observations = raw.observations.map((o) => ({
-    date: o.date,
-    value: o.value === "." ? null : Number(o.value)
-  }));
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url.toString(), {
+        signal: ctrl.signal,
+        next: { revalidate: 60 * 60 * 6 },
+      });
 
-  return { seriesId, observations };
+      // 4xx from FRED means the key or request is bad — retrying won't help.
+      if (res.status === 400 || res.status === 401 || res.status === 403) {
+        throw new FredError(
+          "key_rejected",
+          `FRED rejected the request (${res.status}) — the API key is invalid or revoked.`,
+          res.status
+        );
+      }
+
+      if (!res.ok) {
+        lastError = new FredError(
+          "upstream_down",
+          `FRED upstream returned ${res.status}.`,
+          res.status
+        );
+        // 5xx → fall through to the retry below
+      } else {
+        const raw = (await res.json()) as {
+          observations: Array<{ date: string; value: string }>;
+        };
+        const observations = raw.observations.map((o) => ({
+          date: o.date,
+          value: o.value === "." ? null : Number(o.value),
+        }));
+        return { seriesId, observations };
+      }
+    } catch (err) {
+      if (err instanceof FredError) {
+        if (err.reason === "key_rejected") throw err; // don't retry key errors
+        lastError = err;
+      } else if (err instanceof Error && err.name === "AbortError") {
+        lastError = new FredError(
+          "timeout",
+          `FRED request timed out after ${FETCH_TIMEOUT_MS}ms.`
+        );
+      } else {
+        lastError = new FredError(
+          "other",
+          err instanceof Error ? err.message : "Unknown FRED error"
+        );
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, BACKOFF_BASE_MS * attempt));
+    }
+  }
+
+  throw lastError ?? new FredError("other", "FRED fetch failed for an unknown reason.");
 }
 
 export function yoyDelta(observations: FredObservation[]) {
