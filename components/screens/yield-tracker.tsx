@@ -145,8 +145,7 @@ function computeRow(e: YieldEntry): YieldRow {
   const hidden_inflation_pct =
     yield_pct > 0 ? ((100 / yield_pct) - 1) * 100 : 0;
   const total_invoiced = stated * e.invoiced_unit_cost;
-  const hidden_loss =
-    yield_pct > 0 ? total_invoiced - actual * effective_cost : 0;
+  const hidden_loss = (stated - actual) * e.invoiced_unit_cost;
   return {
     ...e,
     yield_pct,
