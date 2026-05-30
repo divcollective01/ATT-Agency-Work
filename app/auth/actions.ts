@@ -17,31 +17,56 @@ function readCredentials(formData: FormData): { email: string; password: string 
 
 /**
  * Origin used to build absolute redirect URLs for Supabase auth flows.
- * Prefers NEXT_PUBLIC_SITE_URL (set per-environment in Cloudflare Pages
- * and in .env.local) and falls back to the inbound request's forwarded
- * host so local dev and preview deploys work without extra config.
- *
- * Use this for flows where landing on the host that initiated the request
- * is acceptable (e.g. signup email confirmation while testing locally).
+ * Production deployments prefer the configured canonical site URL, while
+ * local dev and preview deployments fall back through environment and
+ * request-derived origins so auth links land on the host that initiated
+ * the request.
  */
 function getOrigin(): string {
-  const envOrigin = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
+  const productionOrigin = getProductionOrigin();
+  if (productionOrigin) return productionOrigin;
+
+  const envOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_SITE_URL);
   if (envOrigin) return envOrigin;
+
+  const vercelOrigin = normalizeOrigin(process.env.VERCEL_URL);
+  if (vercelOrigin) return vercelOrigin;
+
   const h = headers();
+  const requestOrigin = normalizeOrigin(h.get("origin"));
+  if (requestOrigin) return requestOrigin;
+
   const host = h.get("x-forwarded-host") ?? h.get("host");
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  if (host) return `${proto}://${host}`;
+  if (host) {
+    const proto = h.get("x-forwarded-proto") ?? "https";
+    return normalizeOrigin(`${proto}://${host}`) ?? "http://localhost:3000";
+  }
+
   return "http://localhost:3000";
 }
 
-/**
- * Strict site URL for production-only email redirects. Reset emails must
- * never link to localhost because the recipient is rarely the same machine
- * that triggered the request. We require NEXT_PUBLIC_SITE_URL and fail
- * loudly otherwise rather than silently emailing a useless localhost link.
- */
-function requireProductionSiteUrl(): string | null {
-  return process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ?? null;
+function normalizeOrigin(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    return new URL(withProtocol).origin;
+  } catch {
+    return null;
+  }
+}
+
+function isProductionDeployment(): boolean {
+  return process.env.VERCEL_ENV === "production" || process.env.CF_PAGES_BRANCH === "main";
+}
+
+function getProductionOrigin(): string | null {
+  if (!isProductionDeployment()) return null;
+  return (
+    normalizeOrigin(process.env.PRODUCTION_SITE_URL) ??
+    normalizeOrigin(process.env.NEXT_PUBLIC_SITE_URL)
+  );
 }
 
 /**
@@ -146,17 +171,11 @@ export async function resetPassword(_prev: AuthState, formData: FormData): Promi
   const email = String(formData.get("email") ?? "").trim();
   if (!email) return { error: "Email is required." };
 
-  const siteUrl = requireProductionSiteUrl();
-  if (!siteUrl) {
-    return {
-      error:
-        "Server is missing NEXT_PUBLIC_SITE_URL — set it to the production URL in Cloudflare Pages (Settings → Environment Variables) and in .env.local so reset emails always land on production."
-    };
-  }
+  const origin = getOrigin();
 
   const supabase = createSupabaseServerClient();
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${siteUrl}/auth/callback?next=/update-password`
+    redirectTo: `${origin}/auth/callback?next=/update-password`
   });
   if (error) return { error: error.message };
 
