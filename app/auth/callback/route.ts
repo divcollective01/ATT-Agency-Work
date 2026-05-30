@@ -1,4 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  EMAIL_EXISTS_SIGNIN_MESSAGE,
+  isEmailExistsError,
+  loginErrorRedirectUrl
+} from "@/lib/auth-errors";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const runtime = "edge";
@@ -25,6 +30,14 @@ function safeNextPath(raw: string | null): string {
   return raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
 }
 
+function callbackErrorRedirect(
+  origin: string,
+  error: { code?: string; message: string; status?: number }
+): NextResponse {
+  const message = isEmailExistsError(error) ? EMAIL_EXISTS_SIGNIN_MESSAGE : error.message;
+  return NextResponse.redirect(loginErrorRedirectUrl(origin, message));
+}
+
 /**
  * Hash-fragment fallback for Supabase's implicit-flow recovery emails.
  * Those land here as `/auth/callback#access_token=...&type=recovery` and
@@ -41,6 +54,7 @@ function safeNextPath(raw: string | null): string {
  * components/auth/anonymous-auth-provider.tsx for that side.
  */
 function hashFragmentFallback(): NextResponse {
+  const emailExistsMessage = JSON.stringify(EMAIL_EXISTS_SIGNIN_MESSAGE);
   const body = `<!doctype html>
 <html lang="en">
 <head>
@@ -57,7 +71,16 @@ function hashFragmentFallback(): NextResponse {
       var errorCode = params.get("error") || params.get("error_code");
       if (errorCode) {
         var description = params.get("error_description") || errorCode;
-        window.location.replace("/login?error=" + encodeURIComponent(description));
+        var lowerDescription = description.toLowerCase();
+        var isEmailExists = errorCode === "email_exists" ||
+          (lowerDescription.indexOf("email") !== -1 &&
+            (lowerDescription.indexOf("exists") !== -1 ||
+              lowerDescription.indexOf("registered") !== -1 ||
+              lowerDescription.indexOf("already") !== -1));
+        var friendly = isEmailExists ? ${emailExistsMessage} : description;
+        window.location.replace(
+          "/login?mode=signin&error=" + encodeURIComponent(friendly)
+        );
         return;
       }
       var type = params.get("type");
@@ -102,9 +125,7 @@ export async function GET(request: NextRequest) {
     const supabase = createSupabaseServerClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
-      return NextResponse.redirect(
-        `${origin}/login?error=${encodeURIComponent(error.message)}`
-      );
+      return callbackErrorRedirect(origin, error);
     }
     return NextResponse.redirect(`${origin}${next}`);
   }
@@ -116,9 +137,7 @@ export async function GET(request: NextRequest) {
       type: rawType as EmailOtpType
     });
     if (error) {
-      return NextResponse.redirect(
-        `${origin}/login?error=${encodeURIComponent(error.message)}`
-      );
+      return callbackErrorRedirect(origin, error);
     }
     // For recovery, force /update-password regardless of ?next= so the
     // new session is consumed by the password form instead of silently

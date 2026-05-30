@@ -7,9 +7,9 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { signIn, signUp, type AuthState } from "@/app/auth/actions";
+import { signIn, signUp, type AuthMode, type AuthState } from "@/app/auth/actions";
 
-type Mode = "signin" | "signup";
+type Mode = AuthMode;
 
 function SubmitButton({ mode }: { mode: Mode }) {
   const { pending } = useFormStatus();
@@ -29,7 +29,13 @@ function SubmitButton({ mode }: { mode: Mode }) {
   );
 }
 
-export function LoginForm({ initialMode }: { initialMode: Mode }) {
+export function LoginForm({
+  initialMode,
+  initialError
+}: {
+  initialMode: Mode;
+  initialError?: string;
+}) {
   const [mode, setMode] = useState<Mode>(initialMode);
 
   // Keep a separate state per action so the banner from a previous
@@ -37,11 +43,11 @@ export function LoginForm({ initialMode }: { initialMode: Mode }) {
   // signin view and vice versa.
   const [signinState, signinAction] = useFormState<AuthState, FormData>(
     signIn,
-    undefined
+    initialMode === "signin" && initialError ? { error: initialError } : undefined
   );
   const [signupState, signupAction] = useFormState<AuthState, FormData>(
     signUp,
-    undefined
+    initialMode === "signup" && initialError ? { error: initialError } : undefined
   );
 
   const state = mode === "signin" ? signinState : signupState;
@@ -85,12 +91,21 @@ export function LoginForm({ initialMode }: { initialMode: Mode }) {
       </div>
 
       {state?.error ? (
-        <p
+        <div
           role="alert"
-          className="rounded-2xl border border-hotpink/40 bg-hotpink/10 px-4 py-3 text-sm text-hotpink"
+          className="space-y-3 rounded-2xl border border-hotpink/40 bg-hotpink/10 px-4 py-3 text-sm text-hotpink"
         >
-          {state.error}
-        </p>
+          <p>{state.error}</p>
+          {state.suggestedMode === "signin" && mode !== "signin" ? (
+            <button
+              type="button"
+              onClick={() => setMode("signin")}
+              className="text-cream underline-offset-4 hover:underline focus:outline-none focus-visible:underline"
+            >
+              Switch to Sign In
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {state?.message ? (

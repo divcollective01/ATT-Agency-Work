@@ -3,9 +3,20 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import {
+  EMAIL_EXISTS_SIGNIN_MESSAGE,
+  isEmailExistsError
+} from "@/lib/auth-errors";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export type AuthState = { error?: string; message?: string } | undefined;
+export type AuthMode = "signin" | "signup";
+export type AuthState =
+  | { error?: string; message?: string; suggestedMode?: AuthMode }
+  | undefined;
+
+function emailExistsState(): AuthState {
+  return { error: EMAIL_EXISTS_SIGNIN_MESSAGE, suggestedMode: "signin" };
+}
 
 function readCredentials(formData: FormData): { email: string; password: string } | string {
   const email = String(formData.get("email") ?? "").trim();
@@ -72,6 +83,9 @@ export async function signUp(_prev: AuthState, formData: FormData): Promise<Auth
       { email: parsed.email, password: parsed.password },
       { emailRedirectTo }
     );
+    if (error && isEmailExistsError(error)) {
+      return emailExistsState();
+    }
     if (error) return { error: error.message };
 
     // With "Confirm email" OFF, Supabase flips is_anonymous to false right
@@ -101,7 +115,7 @@ export async function signUp(_prev: AuthState, formData: FormData): Promise<Auth
   // is already registered (so we don't leak account existence). Surface a
   // generic hint rather than silently succeeding.
   if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-    return { error: "An account with this email already exists. Try signing in instead." };
+    return emailExistsState();
   }
 
   // user.identities present but no session → email confirmation is on and

@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function LoginPage({
   searchParams
 }: {
-  searchParams?: { mode?: string };
+  searchParams?: { error?: string; mode?: string };
 }) {
   const supabase = createSupabaseServerClient();
   const {
@@ -24,6 +24,7 @@ export default async function LoginPage({
   }
 
   const initialMode = searchParams?.mode === "signin" ? "signin" : "signup";
+  const initialError = searchParams?.error;
   const isAnonymous = Boolean(user?.is_anonymous);
 
   return (
@@ -53,7 +54,7 @@ export default async function LoginPage({
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <LoginForm initialMode={initialMode} />
+            <LoginForm initialMode={initialMode} initialError={initialError} />
           </CardContent>
         </Card>
 
